@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Spout2.NET\Spout2.NET.csproj" />
+  </ItemGroup>
+
+  <!-- Copy the native shim next to the test output so [LibraryImport] resolves it. -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\native\build\spout_shim.dll')">
+    <None Include="..\..\native\build\spout_shim.dll" CopyToOutputDirectory="PreserveNewest">
+      <Link>spout_shim.dll</Link>
+    </None>
+  </ItemGroup>
+</Project>

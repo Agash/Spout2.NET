@@ -1,0 +1,3 @@
+[submodule "native/vendor/Spout2"]
+	path = native/vendor/Spout2
+	url = https://github.com/leadedge/Spout2.git

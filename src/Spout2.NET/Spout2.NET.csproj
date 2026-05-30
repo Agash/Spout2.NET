@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- net11.0 requires the .NET 11 preview SDK; global.json selects it when installed. -->
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <AssemblyName>Spout2.NET</AssemblyName>
+    <RootNamespace>Spout2.NET</RootNamespace>
+    <PackageId>Spout2.NET</PackageId>
+    <Description>.NET bindings for Spout2 on Windows. Publish and receive video frames between apps zero-copy via shared DirectX 11 textures, the shared-texture mechanism OBS and creative tools use. NativeAOT friendly.</Description>
+    <PackageTags>spout;spout2;windows;directx;d3d11;texture;sharing;obs;video;capture;interop;dotnet;nativeaot</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <IsPackable>true</IsPackable>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <NoWarn>CA1515;CA1050</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DotNet.ReproducibleBuilds" PrivateAssets="all" />
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!-- Self-contained native shim (x64), built by native/build-native.ps1 on Windows. -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\native\build\spout_shim.dll')">
+    <None Include="..\..\native\build\spout_shim.dll"
+          Pack="true"
+          PackagePath="runtimes/win-x64/native/"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest">
+      <Link>spout_shim.dll</Link>
+    </None>
+  </ItemGroup>
+</Project>
