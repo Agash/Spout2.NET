@@ -1,9 +1,16 @@
 # Spout2.NET
 
+[![NuGet](https://img.shields.io/nuget/v/Spout2.NET.svg)](https://www.nuget.org/packages/Spout2.NET)
+[![build](https://github.com/Agash/Spout2.NET/actions/workflows/build.yml/badge.svg)](https://github.com/Agash/Spout2.NET/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 .NET bindings for [Spout2](https://spout.zeal.co), the Windows framework for sharing video frames
 between applications in real time. Publish frames for other apps to pick up, or receive frames
 another app is sharing, zero-copy as DirectX 11 shared textures. Works with OBS, Resolume,
 TouchDesigner, and other tools that speak Spout.
+
+> **Alpha.** Early and working, but largely untested in the wild and rough in places. Try it and file
+> issues; expect breaking changes before 1.0.
 
 ## Requirements
 
