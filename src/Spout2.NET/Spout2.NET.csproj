@@ -2,6 +2,7 @@
   <PropertyGroup>
     <!-- net11.0 requires the .NET 11 preview SDK; global.json selects it when installed. -->
     <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <IsAotCompatible>true</IsAotCompatible>
     <AssemblyName>Spout2.NET</AssemblyName>
     <RootNamespace>Spout2.NET</RootNamespace>
     <PackageId>Spout2.NET</PackageId>
