@@ -19,12 +19,12 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0        # MinVer needs full history
           submodules: recursive # Spout2 SDK for the native shim
 
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           # net11.0 needs the .NET 11 preview SDK alongside .NET 10; global.json selects it.
           dotnet-version: |
@@ -136,7 +136,7 @@ jobs:
           name: nuget-package
           path: ${{ env.NuGetDirectory }}
 
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
 
       - name: NuGet login (OIDC)
         id: login
