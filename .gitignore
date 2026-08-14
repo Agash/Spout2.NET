@@ -20,3 +20,6 @@ native/build/
 *.obj
 *.pdb
 *.ilk
+
+# Test run output (coverage reports)
+TestResults/
