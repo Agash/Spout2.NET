@@ -9,7 +9,13 @@ namespace Spout2.NET;
 /// <param name="Height">Height in pixels.</param>
 /// <param name="ShareHandle">The DXGI shared texture handle.</param>
 /// <param name="Format">The texture format.</param>
-public readonly record struct SpoutSenderInfo(string Name, int Width, int Height, nint ShareHandle, DxgiFormat Format);
+public readonly record struct SpoutSenderInfo(
+    string Name,
+    int Width,
+    int Height,
+    nint ShareHandle,
+    DxgiFormat Format
+);
 
 /// <summary>
 /// Enumerates the Spout senders currently advertised on the machine (a process-global registry).
@@ -57,7 +63,16 @@ public sealed class SpoutSenders : IDisposable
     {
         ObjectDisposedException.ThrowIf(_handle == 0, this);
         ArgumentException.ThrowIfNullOrEmpty(name);
-        if (SpoutNative.sp_get_sender_info(_handle, name, out uint w, out uint h, out nint handle, out uint format) != 0)
+        if (
+            SpoutNative.sp_get_sender_info(
+                _handle,
+                name,
+                out uint w,
+                out uint h,
+                out nint handle,
+                out uint format
+            ) != 0
+        )
         {
             info = new SpoutSenderInfo(name, (int)w, (int)h, handle, (DxgiFormat)format);
             return true;
@@ -69,7 +84,8 @@ public sealed class SpoutSenders : IDisposable
     private static string Decode(byte[] buffer)
     {
         int end = Array.IndexOf<byte>(buffer, 0);
-        if (end < 0) end = buffer.Length;
+        if (end < 0)
+            end = buffer.Length;
         return Encoding.UTF8.GetString(buffer, 0, end);
     }
 
@@ -77,6 +93,7 @@ public sealed class SpoutSenders : IDisposable
     public void Dispose()
     {
         nint h = Interlocked.Exchange(ref _handle, 0);
-        if (h != 0) SpoutNative.sp_destroy(h);
+        if (h != 0)
+            SpoutNative.sp_destroy(h);
     }
 }

@@ -32,11 +32,13 @@
 
   <!-- Self-contained native shim (x64), built by native/build-native.ps1 on Windows. -->
   <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\native\build\spout_shim.dll')">
-    <None Include="..\..\native\build\spout_shim.dll"
-          Pack="true"
-          PackagePath="runtimes/win-x64/native/"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest">
+    <None
+      Include="..\..\native\build\spout_shim.dll"
+      Pack="true"
+      PackagePath="runtimes/win-x64/native/"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest"
+    >
       <Link>spout_shim.dll</Link>
     </None>
   </ItemGroup>

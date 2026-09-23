@@ -44,7 +44,8 @@ public sealed class SpoutTransportTests
         using (recvDevice)
         using (recvContext)
         {
-            const int w = 64, h = 64;
+            const int w = 64,
+                h = 64;
             byte[] source = Pattern(w, h);
 
             using ID3D11Texture2D sourceTexture = CreateTexture(sendDevice!, w, h, source);
@@ -61,13 +62,17 @@ public sealed class SpoutTransportTests
                 if (receiver.Receive() && receiver.Texture != 0)
                 {
                     received = receiver.Texture;
-                    if (++frames >= 3) break;
+                    if (++frames >= 3)
+                        break;
                 }
                 Thread.Sleep(16);
             }
 
             using (var senders = new SpoutSenders())
-                Assert.IsTrue(senders.Names().Contains("Spout.NET Test"), "the sender should appear in the registry");
+                Assert.IsTrue(
+                    senders.Names().Contains("Spout.NET Test"),
+                    "the sender should appear in the registry"
+                );
 
             Assert.AreNotEqual(0, received, "the receiver should connect and deliver a texture");
             Assert.AreEqual(w, receiver.SenderWidth);
@@ -80,13 +85,24 @@ public sealed class SpoutTransportTests
 
     private static bool TryCreateDevice(out ID3D11Device? device, out ID3D11DeviceContext? context)
     {
-        FeatureLevel[] levels = [FeatureLevel.Level_11_1, FeatureLevel.Level_11_0, FeatureLevel.Level_10_0];
+        FeatureLevel[] levels =
+        [
+            FeatureLevel.Level_11_1,
+            FeatureLevel.Level_11_0,
+            FeatureLevel.Level_10_0,
+        ];
         foreach (DriverType driver in new[] { DriverType.Hardware, DriverType.Warp })
         {
             Result hr = D3D11.D3D11CreateDevice(
-                null, driver, DeviceCreationFlags.BgraSupport, levels,
-                out device, out context);
-            if (hr.Success && device is not null && context is not null) return true;
+                null,
+                driver,
+                DeviceCreationFlags.BgraSupport,
+                levels,
+                out device,
+                out context
+            );
+            if (hr.Success && device is not null && context is not null)
+                return true;
             device?.Dispose();
             context?.Dispose();
         }
@@ -118,7 +134,13 @@ public sealed class SpoutTransportTests
         }
     }
 
-    private static byte[] ReadBack(ID3D11Device device, ID3D11DeviceContext context, nint texturePtr, int w, int h)
+    private static byte[] ReadBack(
+        ID3D11Device device,
+        ID3D11DeviceContext context,
+        nint texturePtr,
+        int w,
+        int h
+    )
     {
         var stagingDesc = new Texture2DDescription
         {
@@ -139,7 +161,12 @@ public sealed class SpoutTransportTests
         context.CopyResource(staging, received);
         received.Dispose();
 
-        MappedSubresource map = context.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+        MappedSubresource map = context.Map(
+            staging,
+            0,
+            MapMode.Read,
+            Vortice.Direct3D11.MapFlags.None
+        );
         byte[] result = new byte[w * h * 4];
         unsafe
         {
