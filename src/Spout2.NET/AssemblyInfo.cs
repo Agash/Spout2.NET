@@ -19,12 +19,16 @@ internal static class AssemblyInitializer
             typeof(AssemblyInitializer).Assembly,
             static (name, asm, path) =>
             {
-                if (name is not Interop.SpoutNative.Lib) return 0;
+                if (name is not Interop.SpoutNative.Lib)
+                    return 0;
                 // Packaged as runtimes/win-x64/native/spout_shim.dll (resolved by the runtime),
                 // or copied next to the assembly for local builds and tests.
-                if (NativeLibrary.TryLoad("spout_shim.dll", asm, path, out nint h)) return h;
-                if (NativeLibrary.TryLoad("spout_shim", asm, path, out h)) return h;
+                if (NativeLibrary.TryLoad("spout_shim.dll", asm, path, out nint h))
+                    return h;
+                if (NativeLibrary.TryLoad("spout_shim", asm, path, out h))
+                    return h;
                 return 0;
-            });
+            }
+        );
     }
 }

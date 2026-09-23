@@ -44,6 +44,11 @@ jobs:
       - name: Restore
         run: dotnet restore Spout2.NET.slnx
 
+      - name: Check formatting
+        run: |
+          dotnet tool restore
+          dotnet csharpier check .
+
       - name: Build
         run: dotnet build Spout2.NET.slnx --no-restore -c Release
 

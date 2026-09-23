@@ -25,19 +25,29 @@ public sealed partial class SpoutReceiver : IDisposable
     /// <param name="d3d11Device">An <c>ID3D11Device*</c>, or <see cref="nint.Zero"/> to let Spout create one.</param>
     /// <param name="senderName">Sender to receive, or null/empty for the active sender.</param>
     /// <param name="loggerFactory">Optional factory for Debug/Trace diagnostics; omit for none.</param>
-    public SpoutReceiver(nint d3d11Device, string? senderName = null, ILoggerFactory? loggerFactory = null)
+    public SpoutReceiver(
+        nint d3d11Device,
+        string? senderName = null,
+        ILoggerFactory? loggerFactory = null
+    )
     {
-        _logger = (loggerFactory ?? NullLoggerFactory.Instance)
-            .CreateLogger($"Spout2.NET.Receiver.{(string.IsNullOrEmpty(senderName) ? "active" : senderName)}");
+        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger(
+            $"Spout2.NET.Receiver.{(string.IsNullOrEmpty(senderName) ? "active" : senderName)}"
+        );
         _handle = SpoutNative.sp_create();
         if (_handle == 0)
             throw new InvalidOperationException("Failed to create the Spout receiver.");
         if (SpoutNative.sp_open_directx11(_handle, d3d11Device) == 0)
         {
             Dispose();
-            throw new InvalidOperationException("Failed to open DirectX 11 for the Spout receiver.");
+            throw new InvalidOperationException(
+                "Failed to open DirectX 11 for the Spout receiver."
+            );
         }
-        SpoutNative.sp_set_receiver_name(_handle, string.IsNullOrEmpty(senderName) ? null : senderName);
+        SpoutNative.sp_set_receiver_name(
+            _handle,
+            string.IsNullOrEmpty(senderName) ? null : senderName
+        );
         LogCreated(string.IsNullOrEmpty(senderName) ? "(active sender)" : senderName);
     }
 
@@ -62,9 +72,12 @@ public sealed partial class SpoutReceiver : IDisposable
         // Log connection transitions and size/format changes (not every frame) so --verbose shows when a
         // sender appears/disappears and when the texture geometry is renegotiated.
         bool connected = IsConnected;
-        if (connected && !_wasConnected) LogConnected(SenderWidth, SenderHeight);
-        else if (!connected && _wasConnected) LogDisconnected();
-        else if (connected && IsUpdated) LogUpdated(SenderWidth, SenderHeight);
+        if (connected && !_wasConnected)
+            LogConnected(SenderWidth, SenderHeight);
+        else if (!connected && _wasConnected)
+            LogDisconnected();
+        else if (connected && IsUpdated)
+            LogUpdated(SenderWidth, SenderHeight);
         _wasConnected = connected;
 
         return ok;
@@ -92,7 +105,8 @@ public sealed partial class SpoutReceiver : IDisposable
     public void Dispose()
     {
         nint h = Interlocked.Exchange(ref _handle, 0);
-        if (h == 0) return;
+        if (h == 0)
+            return;
         SpoutNative.sp_release_receiver(h);
         SpoutNative.sp_destroy(h);
     }
@@ -106,6 +120,9 @@ public sealed partial class SpoutReceiver : IDisposable
     [LoggerMessage(Level = LogLevel.Debug, Message = "sender disconnected")]
     private partial void LogDisconnected();
 
-    [LoggerMessage(Level = LogLevel.Debug, Message = "sender geometry/format updated ({Width}x{Height})")]
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "sender geometry/format updated ({Width}x{Height})"
+    )]
     private partial void LogUpdated(int width, int height);
 }

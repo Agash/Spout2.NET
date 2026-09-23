@@ -26,7 +26,9 @@ public sealed partial class SpoutSender : IDisposable
     public SpoutSender(string name, nint d3d11Device, ILoggerFactory? loggerFactory = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
-        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger($"Spout2.NET.Sender.{name}");
+        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger(
+            $"Spout2.NET.Sender.{name}"
+        );
         _handle = SpoutNative.sp_create();
         if (_handle == 0)
             throw new InvalidOperationException("Failed to create the Spout sender.");
@@ -69,17 +71,23 @@ public sealed partial class SpoutSender : IDisposable
     public void Send(nint d3d11Texture)
     {
         ObjectDisposedException.ThrowIf(_handle == 0, this);
-        if (d3d11Texture == 0) throw new ArgumentException("Texture pointer is null.", nameof(d3d11Texture));
+        if (d3d11Texture == 0)
+            throw new ArgumentException("Texture pointer is null.", nameof(d3d11Texture));
         if (SpoutNative.sp_send_texture(_handle, d3d11Texture) == 0)
             throw new InvalidOperationException("Failed to send the texture.");
-        if (!_firstSendLogged) { _firstSendLogged = true; LogFirstFrame(); }
+        if (!_firstSendLogged)
+        {
+            _firstSendLogged = true;
+            LogFirstFrame();
+        }
     }
 
     /// <inheritdoc/>
     public void Dispose()
     {
         nint h = Interlocked.Exchange(ref _handle, 0);
-        if (h == 0) return;
+        if (h == 0)
+            return;
         SpoutNative.sp_release_sender(h);
         SpoutNative.sp_destroy(h);
     }

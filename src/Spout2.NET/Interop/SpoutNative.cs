@@ -71,5 +71,12 @@ internal static partial class SpoutNative
     internal static partial int sp_get_sender(nint s, int index, byte[] name, int maxSize);
 
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial int sp_get_sender_info(nint s, string name, out uint width, out uint height, out nint shareHandle, out uint format);
+    internal static partial int sp_get_sender_info(
+        nint s,
+        string name,
+        out uint width,
+        out uint height,
+        out nint shareHandle,
+        out uint format
+    );
 }
