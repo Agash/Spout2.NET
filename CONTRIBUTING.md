@@ -12,8 +12,8 @@ dotnet build Spout2.NET.slnx
 dotnet test --filter "TestCategory!=RequiresGpu"
 ```
 
-The build treats warnings as errors and targets .NET 10 (and .NET 11 preview). If you do not have
-the .NET 11 preview SDK installed, build the `net10.0` target only.
+The build treats warnings as errors and targets .NET 10 and .NET 11. If you do not have
+the .NET 11 SDK installed, build the `net10.0` target only.
 
 ## Native shim
 
