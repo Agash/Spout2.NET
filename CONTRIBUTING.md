@@ -7,27 +7,31 @@ Thanks for your interest in Spout2.NET.
 ```sh
 git clone --recursive https://github.com/Agash/Spout2.NET
 cd Spout2.NET
-pwsh native/build-native.ps1
 dotnet build Spout2.NET.slnx
-dotnet test --filter "TestCategory!=RequiresGpu"
+pwsh tests/SpoutPeer/build.ps1
+dotnet test --solution Spout2.NET.slnx
 ```
 
-The build treats warnings as errors and targets .NET 10 and .NET 11. If you do not have
-the .NET 11 SDK installed, build the `net10.0` target only.
+The build targets .NET 11 and treats warnings as errors.
 
-## Native shim
+## How it is built
 
-The C++ and DirectX work lives in a small native shim under `native/`, which statically links the
-Spout2 SDK (a git submodule). Its flat C ABI is declared in `native/include/spout_shim.h`; the
-managed side P/Invokes it, with DirectX objects passed as opaque pointers. If you change the native
-surface, update the header, the implementation, the managed `SpoutNative` declarations, and rebuild
-with `native/build-native.ps1`. The native shim builds on Windows with MSVC (the Visual Studio C++
-workload).
+Spout2.NET implements the Spout protocol in C#; nothing native ships. The protocol's pieces live in
+`src/Spout2.NET/Protocol` (the shared registry, the texture information record, the access lock, the
+frame counter, the sender memory buffer), Direct3D 11 in `src/Spout2.NET/Direct3D`, and the public API
+at the top level. Windows APIs come from CsWin32: list them in `src/Spout2.NET/NativeMethods.txt` rather
+than declaring them by hand. Kernel objects use .NET's own named `Mutex`, `Semaphore`, `EventWaitHandle`
+and `MemoryMappedFile`, which are the same Win32 objects the Spout SDK creates.
+
+The Spout SDK in `external/Spout2` is the reference. A change to protocol behaviour starts from the SDK
+source that does the same thing, and says in a comment which SDK function it follows.
 
 ## Tests
 
-Value-type tests run anywhere. Tests tagged `RequiresGpu` exercise the shim and a Direct3D 11 device
-(a real GPU); they report Inconclusive when none is available.
+The tests need a Direct3D 11 device; on a machine without a GPU they run on WARP, Windows' software
+rasterizer. `InteropTests` run the upstream SDK in another process (`tests/SpoutPeer`, built with MSVC by
+`build.ps1`) and check that each side receives the other byte-exact; they fail when the peer is not
+built rather than skipping, so a green run always includes them.
 
 ## Pull requests
 
@@ -53,7 +57,7 @@ By contributing you agree that your contributions are licensed under the MIT Lic
 
 - Name tests `{Method}_{Scenario}_{ExpectedResult}`.
 - Prefer the purpose-built MSTest assertions (`Assert.HasCount`, `Assert.Contains`,
-  `Assert.AreSequenceEqual`) over hand-rolled equality checks — the analyzers will point you at them.
+  `Assert.AreSequenceEqual`) over hand-rolled equality checks; the analyzers will point you at them.
 - No `Thread.Sleep`. Use `TaskCompletionSource`, channels, or a fake clock.
 - New behaviour needs a test. Bug fixes need a test that fails before the fix.
 

@@ -23,3 +23,6 @@ native/build/
 
 # Test run output (coverage reports)
 TestResults/
+
+## Test peer and smoke output
+tests/SpoutPeer/bin/

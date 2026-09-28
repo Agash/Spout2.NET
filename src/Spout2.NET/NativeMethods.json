@@ -1,0 +1,12 @@
+{
+  "$schema": "https://aka.ms/CsWin32.schema.json",
+  "allowMarshaling": false,
+  "public": false,
+  "className": "Win32",
+  "comInterop": {
+    "preserveSigMethods": [
+      "IDXGIKeyedMutex.AcquireSync",
+      "ID3D11Device.OpenSharedResource"
+    ]
+  }
+}

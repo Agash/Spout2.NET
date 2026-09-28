@@ -4,20 +4,27 @@
 [![build](https://github.com/Agash/Spout2.NET/actions/workflows/build.yml/badge.svg)](https://github.com/Agash/Spout2.NET/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-.NET bindings for [Spout2](https://spout.zeal.co), the Windows framework for sharing video frames
-between applications in real time. Publish frames for other apps to pick up, or receive frames
-another app is sharing, zero-copy as DirectX 11 shared textures. Works with OBS, Resolume,
-TouchDesigner, and other tools that speak Spout.
+[Spout](https://spout.zeal.co) for .NET 11: share video frames between Windows applications in real time
+as Direct3D 11 shared textures. Frames published here appear in OBS, Resolume, TouchDesigner and every
+other Spout 2 application, and theirs can be received here.
 
-> **Alpha.** Early and working, but largely untested in the wild and rough in places. Try it and file
-> issues; expect breaking changes before 1.0.
+Spout2.NET is a managed implementation of the Spout protocol, not a wrapper around the Spout SDK: the
+shared sender registry, texture sharing, the access lock, frame counting, frame sync and the sender
+memory buffer, over Direct3D 11 (through [CsWin32](https://github.com/microsoft/CsWin32)) and .NET's own
+named kernel objects. There is no native library to ship. It is tested byte-exact in both directions
+against the upstream Spout SDK in a separate process.
+
+- Native AOT compatible, with no native dependencies.
+- Borrowed frames are the sender's own texture, opened on your device: receiving costs no copy.
+- Zero-copy sending: render straight into the shared texture.
+- Frames carry size, format, the sender's frame number and when they were observed.
+
+> **Alpha.** Expect breaking changes before 1.0.
 
 ## Requirements
 
-- Windows x64 with a DirectX 11 GPU.
-- .NET 10 (or .NET 11).
-- DirectX objects are passed as native pointers; [Vortice.Windows](https://github.com/amerkoleci/Vortice.Windows)
-  is the easy way to create them (`ID3D11Device.NativePointer`, `ID3D11Texture2D.NativePointer`).
+- Windows 10 or later, a Direct3D 11 GPU (or the WARP software rasterizer).
+- .NET 11.
 
 ## Install
 
@@ -25,55 +32,117 @@ TouchDesigner, and other tools that speak Spout.
 dotnet add package Spout2.NET
 ```
 
-The package bundles the native helper it needs; there is nothing else to install.
+## Devices
 
-## Publish
+Spout shares textures between devices on the same GPU. A `SpoutDevice` is a Direct3D 11 device, either
+the application's own or one Spout2.NET creates:
 
 ```csharp
-using Spout2.NET;
-
-// device = your ID3D11Device.NativePointer (from Vortice)
-using var sender = new SpoutSender("My Output", device);
-
-// texture = an ID3D11Texture2D.NativePointer
-sender.Send(texture);
+using SpoutDevice device = SpoutDevice.FromD3D11Device(myDevicePointer); // an ID3D11Device*
+using SpoutDevice device = SpoutDevice.Create();                         // the default GPU
+using SpoutDevice device = SpoutDevice.CreateFor(senderInfo);           // the GPU a sender is on
 ```
 
-In OBS, add a **Spout2 Capture** source and choose "My Output".
+`SpoutDevice.GetAdapters()` lists the GPUs.
 
-## Receive
+## Send
 
 ```csharp
-using Spout2.NET;
+using SpoutSender sender = new("My Output", device);
 
-using var receiver = new SpoutReceiver(device);
+// Copy a texture of yours into the shared texture on the GPU:
+sender.Send(texture); // an ID3D11Texture2D* on the device
 
-if (receiver.Receive() && receiver.Texture != 0)
+// Or render into the shared texture directly, with no copy:
+if (sender.TryBeginFrame(1920, 1080, SpoutFormat.Bgra8Unorm, out SpoutSenderFrame frame))
 {
-    if (receiver.IsUpdated)
+    using (frame)
     {
-        int w = receiver.SenderWidth, h = receiver.SenderHeight; // size changed
+        Render(frame.Texture);
+        frame.Publish();
     }
-    // wrap receiver.Texture as a (non-owning) ID3D11Texture2D and read / copy / encode it
 }
 ```
 
-List senders with `SpoutSenders`.
+The sender joins the Spout registry with its first frame and leaves it when disposed. In OBS, add a
+**Spout2 Capture** source and choose "My Output".
+
+## Receive
+
+Frames are borrowed: `SpoutFrame` is the sender's texture under Spout's lock, valid until disposed.
+Read it, copy it (`CopyTo`), or keep a copy (`Retain`):
+
+```csharp
+using SpoutReceiver receiver = new(device, new() { SenderName = "OBS" }); // or null: the active sender
+
+await receiver.RunAsync((in SpoutFrame frame) =>
+{
+    frame.CopyTo(encoderInput);            // GPU copy into a texture of yours
+    Console.WriteLine($"#{frame.FrameNumber} {frame.Width}x{frame.Height} {frame.Format}");
+}, cancellationToken);
+```
+
+`RunAsync` delivers each new frame on a thread of its own, waits for the sender when it stops, and
+follows the active sender when no name is given. For a loop of your own, `TryReceive` borrows the current
+frame:
+
+```csharp
+if (receiver.TryReceive(out SpoutFrame frame) == SpoutReceiveResult.Received)
+{
+    using (frame)
+    {
+        using SpoutFrameLease kept = frame.Retain(); // a copy that outlives the borrow
+    }
+}
+```
+
+Spout's lock is a Win32 mutex owned by the receiving thread, so a borrowed frame is disposed on the
+thread that received it and never held across an `await`.
+
+## Senders
+
+```csharp
+foreach (SpoutSenderInfo s in SpoutSenders.GetAll())
+    Console.WriteLine($"{s.Name} {s.Width}x{s.Height} {s.Format} {s.ExecutablePath}");
+
+string? active = SpoutSenders.Active;
+SpoutSenders.TrySetActive("My Output");
+
+await foreach (var senders in SpoutSenders.WatchAsync(TimeSpan.FromSeconds(1), cancellationToken))
+    Show(senders); // each time a sender starts, stops or changes
+```
+
+## Coming from the Spout SDK
+
+| Spout SDK (`spoutDX`) | Spout2.NET |
+| --- | --- |
+| `SetSenderName`, `SendTexture` | `new SpoutSender(name, device)`, `Send` |
+| rendering into the sender's shared texture | `TryBeginFrame`, `SpoutSenderFrame.Publish` |
+| `ReceiveTexture`, `GetSenderTexture` | `TryReceive` / `RunAsync`, `SpoutFrame.Texture` |
+| `IsUpdated` | `SpoutFrame.SenderChanged` |
+| `IsFrameNew`, `GetSenderFrame`, `GetSenderFps` | `SpoutFrame.IsNew`, `FrameNumber`, `SpoutSender.FramesPerSecond` |
+| `SetFrameSync`, `WaitFrameSync` | `SpoutSenderOptions.SignalFrameSync`, `SpoutReceiverOptions.WaitForFrameSync` |
+| `WriteMemoryBuffer`, `ReadMemoryBuffer` | `SpoutSender.WriteMetadata`, `SpoutReceiver.ReadMetadata` |
+| `GetSenderCount`, `GetSender`, `GetSenderInfo` | `SpoutSenders.GetAll`, `TryGet` |
+| `GetActiveSender`, `SetActiveSender` | `SpoutSenders.Active`, `TrySetActive` |
+| `GetSenderAdapter` | `SpoutDevice.CreateFor` |
+
+Frame counting is on in Spout2.NET whatever Spout Settings says, so frames are always numbered and
+repeats are never delivered as new.
 
 ## Building from source
 
 ```sh
 git clone --recursive https://github.com/Agash/Spout2.NET
 cd Spout2.NET
-pwsh native/build-native.ps1
 dotnet build Spout2.NET.slnx
-dotnet test
+pwsh tests/SpoutPeer/build.ps1   # the upstream SDK as a test peer; needs MSVC
+dotnet test --solution Spout2.NET.slnx
 ```
 
-The native helper compiles the Spout2 SDK (a git submodule) and a small shim into one self-contained
-DLL; the managed library is plain `net10.0` / `net11.0`.
+The Spout SDK in `external/Spout2` is the protocol reference and the interop test peer; nothing from it
+ships.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Bundled Spout2 code is BSD 2-Clause; see
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+MIT. See [LICENSE](LICENSE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

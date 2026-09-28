@@ -1,7 +1,6 @@
 name: build
 
 on:
-  workflow_dispatch:
   push:
     branches: [main]
     tags: ["v*"]
@@ -9,123 +8,137 @@ on:
     branches: [main]
   release:
     types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   NuGetDirectory: ${{ github.workspace }}/nuget
+  DOTNET_NOLOGO: true
 
 jobs:
-  build_and_test:
-    name: Build, Test, and Pack
-    runs-on: windows-latest
+  test:
+    name: Test (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Hosted runners have no GPU: the tests run on WARP, Windows' software rasterizer, which
+          # shares textures between devices like a GPU does. The cross-GPU test needs two GPUs and is
+          # inconclusive here; it runs on the development machine.
+          - { os: windows-latest, rid: win-x64, arch: x64, format: true }
+          - { os: windows-11-arm, rid: win-arm64, arch: arm64, format: false }
 
-    permissions:
-      contents: read
-      # Signing the provenance statement for the packages this job produces. Stated explicitly
-      # because attestation needs more than the read-only default.
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0        # MinVer needs full history
-          submodules: recursive # Spout2 SDK for the native shim
+          fetch-depth: 0 # MinVer needs the tags
+          submodules: recursive # the Spout SDK, for the interop peer
 
       - uses: actions/setup-dotnet@v6
         with:
-          # net11.0 needs the .NET 11 preview SDK alongside .NET 10; global.json selects it.
           dotnet-version: |
             10.0.x
             11.0.x
-
-      - name: Build native shim (MSVC x64)
-        shell: pwsh
-        run: native/build-native.ps1
 
       - name: Restore
         run: dotnet restore Spout2.NET.slnx
 
       - name: Check formatting
+        if: matrix.format
         run: |
-          dotnet tool restore
+          # Sequential: the .NET 11 RC1 SDK's parallel tool restore attaches one package's commands to
+          # another and fails the restore.
+          dotnet tool restore --disable-parallel
           dotnet csharpier check .
 
       - name: Build
         run: dotnet build Spout2.NET.slnx --no-restore -c Release
 
-      - name: Test (value-type, no GPU required)
-        run: dotnet test --solution Spout2.NET.slnx --no-build -c Release --filter "TestCategory!=RequiresGpu" -- --coverage --coverage-settings coverage.settings.xml --coverage-output-format cobertura --coverage-output coverage.cobertura.xml
+      # The upstream Spout SDK as a separate process, which the interop tests exchange frames with.
+      - name: Build the Spout SDK peer
+        shell: pwsh
+        run: ./tests/SpoutPeer/build.ps1 -Arch ${{ matrix.arch }}
+
+      - name: Test
+        run: >-
+          dotnet test --solution Spout2.NET.slnx --no-build -c Release
+          --coverage --coverage-settings coverage.settings.xml --coverage-output-format cobertura --coverage-output coverage.cobertura.xml
 
       - name: Summarize coverage
-        # Renders the cobertura totals into the run summary. Uploading the raw XML alone means nobody
-        # ever looks at it; this puts the numbers on the run page itself.
         if: always()
-        shell: bash
+        shell: pwsh
         run: |
-          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import glob, xml.etree.ElementTree as ET
-
-          files = sorted(glob.glob('**/coverage.cobertura.xml', recursive=True))
-          if not files:
-              print('### Coverage\n\nNo coverage report was produced.')
-              raise SystemExit(0)
-
-          # Multi-targeted runs emit one report per TFM; they cover the same code, so report the first
-          # and note how many were produced rather than double-counting.
-          root = ET.parse(files[0]).getroot()
-
-          def pct(attr):
-              return float(root.get(attr) or 0) * 100
-
-          print('### Coverage\n')
-          print('| Metric | Covered | Total | Rate |')
-          print('| --- | ---: | ---: | ---: |')
-          print(f"| Lines | {root.get('lines-covered')} | {root.get('lines-valid')} | {pct('line-rate'):.1f}% |")
-          print(f"| Branches | {root.get('branches-covered')} | {root.get('branches-valid')} | {pct('branch-rate'):.1f}% |")
-
-          packages = root.findall('.//package')
-          if packages:
-              print('\n<details><summary>Per assembly</summary>\n')
-              print('| Assembly | Lines | Branches |')
-              print('| --- | ---: | ---: |')
-              for p in sorted(packages, key=lambda p: p.get('name') or ''):
-                  lr = float(p.get('line-rate') or 0) * 100
-                  br = float(p.get('branch-rate') or 0) * 100
-                  print(f"| {p.get('name')} | {lr:.1f}% | {br:.1f}% |")
-              print('\n</details>')
-
-          if len(files) > 1:
-              print(f"\n_{len(files)} reports produced (one per target framework); totals shown for `{files[0]}`._")
-          PY
+          $report = Get-ChildItem -Recurse -Filter coverage.cobertura.xml | Select-Object -First 1
+          if (-not $report) { '### Coverage (${{ matrix.rid }})', '', 'No report was produced.' | Add-Content $env:GITHUB_STEP_SUMMARY; exit 0 }
+          [xml]$xml = Get-Content $report.FullName
+          $lines = [double]$xml.coverage.'line-rate'
+          $branches = [double]$xml.coverage.'branch-rate'
+          @(
+            '### Coverage (${{ matrix.rid }})'
+            ''
+            '| Metric | Covered | Total | Rate |'
+            '| --- | ---: | ---: | ---: |'
+            "| Lines | $($xml.coverage.'lines-covered') | $($xml.coverage.'lines-valid') | $($lines.ToString('P1')) |"
+            "| Branches | $($xml.coverage.'branches-covered') | $($xml.coverage.'branches-valid') | $($branches.ToString('P1')) |"
+          ) | Add-Content $env:GITHUB_STEP_SUMMARY
 
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: coverage
+          name: coverage-${{ matrix.rid }}
           if-no-files-found: warn
-          path: '**/coverage.cobertura.xml'
+          path: "**/coverage.cobertura.xml"
 
-      - name: Test (GPU round-trip)
-        # Non-gating: GitHub Windows runners use WARP (software D3D11), where cross-device shared
-        # texture sharing may not work. The local GPU run is the authoritative end-to-end check.
-        continue-on-error: true
-        run: dotnet test --solution Spout2.NET.slnx --no-build -c Release --filter "TestCategory=RequiresGpu"
+      # IsAotCompatible only runs the analyzers. Publishing and running a real program is what proves
+      # the library works as Native AOT.
+      - name: Native AOT publish and run
+        shell: pwsh
+        run: |
+          dotnet publish samples/Spout2.NET.Smoke/Spout2.NET.Smoke.csproj -r ${{ matrix.rid }} -c Release -o artifacts/smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./artifacts/smoke/Spout2.NET.Smoke.exe
+          exit $LASTEXITCODE
+
+  pack:
+    name: Pack
+    needs: [test]
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      # Signing the provenance statement for the package.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
 
       - name: Pack
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-        run: dotnet pack src/Spout2.NET/Spout2.NET.csproj --no-build -c Release -o ${{ env.NuGetDirectory }}
+        run: dotnet pack src/Spout2.NET/Spout2.NET.csproj -c Release -o ${{ env.NuGetDirectory }}
 
+      # A signed statement, hosted by GitHub, of which workflow and commit produced these exact
+      # package files, so a download can be verified as built from this repository.
       - name: Attest build provenance
-        # Records, in a signed statement GitHub hosts, which workflow and which commit produced these
-        # exact package files. Anyone who downloads the package can verify it came from this repository
-        # rather than from someone who republished it under the same name.
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: ${{ env.NuGetDirectory }}/*.nupkg
-      - name: Upload package artifact
-        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v7
+
+      - uses: actions/upload-artifact@v7
         with:
           name: nuget-package
           if-no-files-found: error
@@ -133,24 +146,21 @@ jobs:
           path: ${{ env.NuGetDirectory }}/*.nupkg
 
   publish_nuget:
-    name: Publish NuGet Packages
-    needs: [build_and_test]
-    # Publishing runs only when a GitHub release is published (or manually dispatched), matching the
-    # other Agash packages. Requires a NuGet.org trusted-publishing policy for this package.
+    name: Publish to NuGet
+    needs: [pack]
+    # Publishing runs only when a GitHub release is published (or on manual dispatch). Requires the
+    # nuget.org trusted-publishing policy for this package.
     if: (github.event_name == 'release' && github.event.action == 'published') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # Declaring an environment is what makes GitHub record a deployment, which is what
-    # surfaces the Deployments tab and the package link on the repo home page.
+    # Declaring an environment records a deployment, which surfaces the package on the repository page.
     environment:
       name: nuget.org
       url: https://www.nuget.org/packages/Spout2.NET
     permissions:
       contents: read
-      id-token: write   # OIDC for NuGet.org trusted publishing
-
+      id-token: write # OIDC for nuget.org trusted publishing
     steps:
-      - name: Download package artifact
-        uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8
         with:
           name: nuget-package
           path: ${{ env.NuGetDirectory }}
@@ -163,11 +173,10 @@ jobs:
         with:
           user: Agash
 
-      - name: Publish packages
+      - name: Publish
         shell: bash
         run: |
           for f in "${{ env.NuGetDirectory }}"/*.nupkg; do
-            echo "Pushing $f"
             dotnet nuget push "$f" \
               --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
               --source https://api.nuget.org/v3/index.json \

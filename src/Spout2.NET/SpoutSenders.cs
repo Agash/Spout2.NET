@@ -1,99 +1,132 @@
-using System.Text;
-using Spout2.NET.Interop;
+using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
+using Spout2.NET.Protocol;
 
 namespace Spout2.NET;
 
-/// <summary>Describes a Spout sender currently advertised on the machine.</summary>
-/// <param name="Name">The sender name.</param>
-/// <param name="Width">Width in pixels.</param>
-/// <param name="Height">Height in pixels.</param>
-/// <param name="ShareHandle">The DXGI shared texture handle.</param>
-/// <param name="Format">The texture format.</param>
+/// <summary>A sender as the shared Spout registry describes it.</summary>
+/// <param name="Name">The sender's name.</param>
+/// <param name="Width">The shared texture's width.</param>
+/// <param name="Height">The shared texture's height.</param>
+/// <param name="Format">The shared texture's format.</param>
+/// <param name="ShareHandle">
+/// The texture's Direct3D shared handle, which a receiver opens on its own device; 0 when the
+/// sender shares through CPU memory instead.
+/// </param>
+/// <param name="ExecutablePath">The sending application, as it recorded itself.</param>
+/// <param name="SharesCpuMemory">The sender shares pixels through memory, not a texture.</param>
+/// <param name="UsesOpenGLInterop">The sender is an OpenGL application sharing through the GL/DX interop.</param>
 public readonly record struct SpoutSenderInfo(
     string Name,
     int Width,
     int Height,
-    nint ShareHandle,
-    DxgiFormat Format
-);
+    SpoutFormat Format,
+    uint ShareHandle,
+    string? ExecutablePath,
+    bool SharesCpuMemory,
+    bool UsesOpenGLInterop
+)
+{
+    internal static SpoutSenderInfo From(string name, in SharedTextureInfo info) =>
+        new(
+            name,
+            (int)info.Width,
+            (int)info.Height,
+            SpoutFormats.FromRegistry(info.Format),
+            info.ShareHandle,
+            SpoutName.Decode(info.Description),
+            info.ShareHandle == 0 || (info.PartnerId & SharedTextureInfo.CpuSharing) != 0,
+            (info.PartnerId & SharedTextureInfo.GlDxInterop) != 0
+        );
+}
 
 /// <summary>
-/// Enumerates the Spout senders currently advertised on the machine (a process-global registry).
+/// The senders on this machine: the registry every Spout application shares, including the active
+/// sender that receivers follow when they are not given a name.
 /// </summary>
-public sealed class SpoutSenders : IDisposable
+public static class SpoutSenders
 {
-    private const int NameBufferSize = 256;
-    private nint _handle;
+    /// <summary>The name receivers follow when not given one, or null when there is no sender.</summary>
+    public static string? Active => SenderRegistry.GetActive();
 
-    /// <summary>Open a handle to the sender registry.</summary>
-    public SpoutSenders()
+    /// <summary>Every sender, sorted as the registry sorts them.</summary>
+    /// <returns>The senders.</returns>
+    public static ImmutableArray<SpoutSenderInfo> GetAll()
     {
-        _handle = SpoutNative.sp_create();
-        if (_handle == 0)
-            throw new InvalidOperationException("Failed to open the Spout sender registry.");
-    }
-
-    /// <summary>Number of senders currently advertised.</summary>
-    public int Count
-    {
-        get
+        ImmutableArray<SpoutSenderInfo>.Builder senders =
+            ImmutableArray.CreateBuilder<SpoutSenderInfo>();
+        foreach (string name in SenderRegistry.GetNames())
         {
-            ObjectDisposedException.ThrowIf(_handle == 0, this);
-            return SpoutNative.sp_get_sender_count(_handle);
+            if (SenderRegistry.TryReadInfo(name, out SharedTextureInfo info))
+            {
+                senders.Add(SpoutSenderInfo.From(name, info));
+            }
         }
+
+        return senders.ToImmutable();
     }
 
-    /// <summary>Snapshot the names of the currently advertised senders.</summary>
-    public IReadOnlyList<string> Names()
+    /// <summary>One sender by name.</summary>
+    /// <param name="name">The sender's name.</param>
+    /// <param name="sender">The sender, when it exists.</param>
+    /// <returns>Whether it exists.</returns>
+    public static bool TryGet(string name, out SpoutSenderInfo sender)
     {
-        ObjectDisposedException.ThrowIf(_handle == 0, this);
-        int count = SpoutNative.sp_get_sender_count(_handle);
-        var list = new List<string>(count);
-        byte[] buffer = new byte[NameBufferSize];
-        for (int i = 0; i < count; i++)
-        {
-            if (SpoutNative.sp_get_sender(_handle, i, buffer, NameBufferSize) != 0)
-                list.Add(Decode(buffer));
-        }
-        return list;
-    }
-
-    /// <summary>Look up the dimensions, share handle, and format of a named sender.</summary>
-    public bool TryGetInfo(string name, out SpoutSenderInfo info)
-    {
-        ObjectDisposedException.ThrowIf(_handle == 0, this);
         ArgumentException.ThrowIfNullOrEmpty(name);
-        if (
-            SpoutNative.sp_get_sender_info(
-                _handle,
-                name,
-                out uint w,
-                out uint h,
-                out nint handle,
-                out uint format
-            ) != 0
-        )
+        if (SenderRegistry.TryReadInfo(name, out SharedTextureInfo info))
         {
-            info = new SpoutSenderInfo(name, (int)w, (int)h, handle, (DxgiFormat)format);
+            sender = SpoutSenderInfo.From(name, info);
             return true;
         }
-        info = default;
+
+        sender = default;
         return false;
     }
 
-    private static string Decode(byte[] buffer)
+    /// <summary>Makes a sender the one receivers without a name follow.</summary>
+    /// <param name="name">The sender's name.</param>
+    /// <returns>Whether the sender exists.</returns>
+    public static bool TrySetActive(string name)
     {
-        int end = Array.IndexOf<byte>(buffer, 0);
-        if (end < 0)
-            end = buffer.Length;
-        return Encoding.UTF8.GetString(buffer, 0, end);
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        return SenderRegistry.TrySetActive(name);
     }
 
-    /// <inheritdoc/>
-    public void Dispose()
+    /// <summary>
+    /// The senders each time they change: a sender starts or stops, or its size or format changes.
+    /// Spout has no change notification, so the registry is read every <paramref name="interval"/>;
+    /// the first result is the current set.
+    /// </summary>
+    /// <param name="interval">How often to read the registry.</param>
+    /// <param name="cancellationToken">Ends the sequence.</param>
+    /// <returns>The senders, each time they change.</returns>
+    public static IAsyncEnumerable<ImmutableArray<SpoutSenderInfo>> WatchAsync(
+        TimeSpan interval,
+        CancellationToken cancellationToken = default
+    )
     {
-        nint h = Interlocked.Exchange(ref _handle, 0);
-        if (h != 0)
-            SpoutNative.sp_destroy(h);
+        // Checked here, not in the iterator, which would only run at the first MoveNextAsync.
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
+        return Watch(interval, cancellationToken);
+    }
+
+    private static async IAsyncEnumerable<ImmutableArray<SpoutSenderInfo>> Watch(
+        TimeSpan interval,
+        [EnumeratorCancellation] CancellationToken cancellationToken
+    )
+    {
+        using PeriodicTimer timer = new(interval);
+        ImmutableArray<SpoutSenderInfo> last = [];
+        bool first = true;
+        do
+        {
+            ImmutableArray<SpoutSenderInfo> current = GetAll();
+            if (first || !current.SequenceEqual(last))
+            {
+                first = false;
+                last = current;
+                yield return current;
+            }
+        } while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false));
     }
 }

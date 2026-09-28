@@ -13,6 +13,9 @@
     <Folder Name="/src/">
         <Project Path="src/Spout2.NET/Spout2.NET.csproj" />
     </Folder>
+    <Folder Name="/samples/">
+        <Project Path="samples/Spout2.NET.Smoke/Spout2.NET.Smoke.csproj" />
+    </Folder>
     <Folder Name="/tests/">
         <Project Path="tests/Spout2.NET.Tests/Spout2.NET.Tests.csproj" />
     </Folder>
