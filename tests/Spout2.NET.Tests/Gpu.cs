@@ -159,6 +159,8 @@ internal static unsafe class Gpu
         }
     }
 
+    public static D3D11Texture D3D11(this ComPtr<ID3D11Texture2D> texture) => new(texture.Address);
+
     // A sender name no other test run uses.
     public static string UniqueName(string what) =>
         $"Spout2.NET {what} {Environment.ProcessId}-{Guid.NewGuid():N}";

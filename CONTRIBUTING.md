@@ -16,7 +16,7 @@ The build targets .NET 11 and treats warnings as errors.
 
 ## How it is built
 
-Spout2.NET implements the Spout protocol in C#; nothing native ships. The protocol's pieces live in
+The protocol's pieces live in
 `src/Spout2.NET/Protocol` (the shared registry, the texture information record, the access lock, the
 frame counter, the sender memory buffer), Direct3D 11 in `src/Spout2.NET/Direct3D`, and the public API
 at the top level. Windows APIs come from CsWin32: list them in `src/Spout2.NET/NativeMethods.txt` rather

@@ -28,7 +28,7 @@ public sealed class InteropTests
         using SpoutSender sender = new(name, device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.CreateTexture(device, Width, Height);
         Gpu.Upload(device, texture.Address, Gpu.Pattern(1, Width, Height), Width);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         sender.WriteMetadata("hello from Spout2.NET"u8);
 
         using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(
@@ -64,7 +64,7 @@ public sealed class InteropTests
         using SpoutSender sender = new(Gpu.UniqueName("active"), device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.CreateTexture(device, Width, Height);
         Gpu.Upload(device, texture.Address, Gpu.Pattern(1, Width, Height), Width);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         Assert.AreEqual(sender.Name, SpoutSenders.Active);
 
         using CancellationTokenSource stop = CancellationTokenSource.CreateLinkedTokenSource(
@@ -123,7 +123,7 @@ public sealed class InteropTests
         Task run = receiver.RunAsync(
             (in SpoutFrame frame) =>
             {
-                byte[] pixels = Gpu.Read(device, frame.Texture);
+                byte[] pixels = Gpu.Read(device, frame.Texture.NativePointer);
                 uint index = Gpu.FrameIndex(pixels);
                 CollectionAssert.AreEqual(
                     Gpu.Pattern(index, Width, Height),
@@ -225,7 +225,7 @@ public sealed class InteropTests
             {
                 frame++;
                 Gpu.Upload(device, texture.Address, Gpu.Pattern(frame, Width, Height), Width);
-                _ = sender.Send(texture.Address);
+                _ = sender.Send(texture.D3D11());
             }
         }
         catch (OperationCanceledException)

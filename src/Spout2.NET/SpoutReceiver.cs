@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Spout2.NET.Direct3D;
+using Spout2.NET.OpenGL;
 using Spout2.NET.Protocol;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Direct3D11;
@@ -183,13 +184,20 @@ public sealed unsafe class SpoutReceiver : IDisposable
                     );
             }
 
-            _connection = new Connection(sender, texture);
+            _connection = new Connection(sender, texture, Device.OpenGL);
             changed = true;
         }
 
         Connection connection = _connection;
         if (!connection.Access.TryEnter())
         {
+            return SpoutReceiveResult.Busy;
+        }
+
+        // On a device for OpenGL the frame is also locked for OpenGL, on this thread's context.
+        if (connection.OpenGL is { } link && !link.TryLock())
+        {
+            connection.Access.Exit();
             return SpoutReceiveResult.Busy;
         }
 
@@ -288,6 +296,7 @@ public sealed unsafe class SpoutReceiver : IDisposable
         }
 
         _frameOpen = false;
+        connection.OpenGL?.Unlock();
         connection.Access.Exit();
     }
 
@@ -407,7 +416,11 @@ public sealed unsafe class SpoutReceiver : IDisposable
     // The receiver's hold on one sender: its texture opened on this device, its lock and its count.
     internal sealed class Connection : IDisposable
     {
-        public Connection(SpoutSenderInfo info, ComPtr<ID3D11Texture2D> texture)
+        public Connection(
+            SpoutSenderInfo info,
+            ComPtr<ID3D11Texture2D> texture,
+            OpenGLBridge? openGL
+        )
         {
             Info = info;
             Texture = texture;
@@ -415,14 +428,19 @@ public sealed unsafe class SpoutReceiver : IDisposable
             {
                 Access = TextureAccess.For(info.Name, texture);
                 Counter = FrameCounter.OpenOrCreate(info.Name);
+                OpenGL = openGL?.LinkTo(texture.Pointer);
             }
             catch
             {
+                Counter?.Dispose();
                 Access?.Dispose();
                 texture.Dispose();
                 throw;
             }
         }
+
+        // The OpenGL texture linked to the sender's, on a device for OpenGL.
+        public OpenGLBridge.Link? OpenGL { get; }
 
         public SpoutSenderInfo Info { get; }
 
@@ -439,6 +457,7 @@ public sealed unsafe class SpoutReceiver : IDisposable
         public void Dispose()
         {
             Metadata?.Dispose();
+            OpenGL?.Dispose();
             Counter.Dispose();
             Access.Dispose();
             Texture.Dispose();

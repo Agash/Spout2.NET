@@ -19,7 +19,7 @@ public sealed class SenderReceiverTests
         using SpoutSender sender = new(name, device);
         using (ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height))
         {
-            Assert.IsTrue(sender.Send(texture.Address));
+            Assert.IsTrue(sender.Send(texture.D3D11()));
         }
 
         Assert.IsTrue(sender.IsPublished);
@@ -37,7 +37,7 @@ public sealed class SenderReceiverTests
             Assert.AreEqual(1, frame.FrameNumber);
             CollectionAssert.AreEqual(
                 Gpu.Pattern(1, Width, Height),
-                Gpu.Read(device, frame.Texture)
+                Gpu.Read(device, frame.Texture.NativePointer)
             );
         }
 
@@ -52,7 +52,7 @@ public sealed class SenderReceiverTests
         string name = Gpu.UniqueName("repeat");
         using SpoutSender sender = new(name, device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         using SpoutReceiver receiver = new(device, new() { SenderName = name });
         Receive(receiver, frame => Assert.IsTrue(frame.IsNew));
 
@@ -66,7 +66,7 @@ public sealed class SenderReceiverTests
             }
         );
 
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         Assert.IsTrue(receiver.HasNewFrame);
         Receive(
             receiver,
@@ -87,7 +87,7 @@ public sealed class SenderReceiverTests
         Assert.IsFalse(SpoutSenders.TryGet(name, out _), "Registered before its first frame.");
         using (ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height))
         {
-            Assert.IsTrue(sender.Send(texture.Address));
+            Assert.IsTrue(sender.Send(texture.D3D11()));
         }
 
         Assert.IsTrue(SpoutSenders.TryGet(name, out SpoutSenderInfo info));
@@ -113,8 +113,8 @@ public sealed class SenderReceiverTests
         using SpoutSender b = new(prefix + " b", device);
         using SpoutSender a = new(prefix + " a", device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Assert.IsTrue(b.Send(texture.Address));
-        Assert.IsTrue(a.Send(texture.Address));
+        Assert.IsTrue(b.Send(texture.D3D11()));
+        Assert.IsTrue(a.Send(texture.D3D11()));
 
         string[] ours =
         [
@@ -136,7 +136,7 @@ public sealed class SenderReceiverTests
         string name = Gpu.UniqueName("taken");
         using SpoutSender first = new(name, device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Assert.IsTrue(first.Send(texture.Address));
+        Assert.IsTrue(first.Send(texture.D3D11()));
 
         _ = Assert.ThrowsExactly<SpoutException>(() => new SpoutSender(name, device));
         _ = Assert.ThrowsExactly<ArgumentException>(() =>
@@ -154,13 +154,13 @@ public sealed class SenderReceiverTests
         using SpoutReceiver receiver = new(device, new() { SenderName = name });
         using (ComPtr<ID3D11Texture2D> small = Gpu.Filled(device, 1, Width, Height))
         {
-            Assert.IsTrue(sender.Send(small.Address));
+            Assert.IsTrue(sender.Send(small.D3D11()));
         }
 
         Receive(receiver, static frame => Assert.AreEqual(64, frame.Width));
         using (ComPtr<ID3D11Texture2D> large = Gpu.Filled(device, 2, 128, 72))
         {
-            Assert.IsTrue(sender.Send(large.Address));
+            Assert.IsTrue(sender.Send(large.D3D11()));
         }
 
         Receive(
@@ -170,7 +170,10 @@ public sealed class SenderReceiverTests
                 Assert.IsTrue(frame.SenderChanged);
                 Assert.AreEqual(128, frame.Width);
                 Assert.AreEqual(72, frame.Height);
-                CollectionAssert.AreEqual(Gpu.Pattern(2, 128, 72), Gpu.Read(device, frame.Texture));
+                CollectionAssert.AreEqual(
+                    Gpu.Pattern(2, 128, 72),
+                    Gpu.Read(device, frame.Texture.NativePointer)
+                );
             }
         );
     }
@@ -186,8 +189,8 @@ public sealed class SenderReceiverTests
         );
         using (frame)
         {
-            Assert.AreEqual(sender.Texture, frame.Texture);
-            Gpu.Upload(device, frame.Texture, Gpu.Pattern(7, Width, Height), Width);
+            Assert.AreEqual(sender.SharedTexture, frame.Texture);
+            Gpu.Upload(device, frame.Texture.NativePointer, Gpu.Pattern(7, Width, Height), Width);
             frame.Publish();
         }
 
@@ -198,7 +201,7 @@ public sealed class SenderReceiverTests
             received =>
                 CollectionAssert.AreEqual(
                     Gpu.Pattern(7, Width, Height),
-                    Gpu.Read(device, received.Texture)
+                    Gpu.Read(device, received.Texture.NativePointer)
                 )
         );
 
@@ -213,7 +216,12 @@ public sealed class SenderReceiverTests
         );
         using (discarded)
         {
-            Gpu.Upload(device, discarded.Texture, Gpu.Pattern(8, Width, Height), Width);
+            Gpu.Upload(
+                device,
+                discarded.Texture.NativePointer,
+                Gpu.Pattern(8, Width, Height),
+                Width
+            );
         }
 
         Assert.AreEqual(1, sender.FrameNumber);
@@ -291,25 +299,25 @@ public sealed class SenderReceiverTests
         using SpoutReceiver receiver = new(device, new() { SenderName = name });
         using ComPtr<ID3D11Texture2D> first = Gpu.Filled(device, 1, Width, Height);
         using ComPtr<ID3D11Texture2D> second = Gpu.Filled(device, 2, Width, Height);
-        Assert.IsTrue(sender.Send(first.Address));
+        Assert.IsTrue(sender.Send(first.D3D11()));
 
         SpoutFrameLease? lease = null;
         Receive(receiver, frame => lease = frame.Retain());
         using (lease)
         {
-            Assert.IsTrue(sender.Send(second.Address));
+            Assert.IsTrue(sender.Send(second.D3D11()));
             Receive(
                 receiver,
                 frame =>
                     CollectionAssert.AreEqual(
                         Gpu.Pattern(2, Width, Height),
-                        Gpu.Read(device, frame.Texture)
+                        Gpu.Read(device, frame.Texture.NativePointer)
                     )
             );
             Assert.AreEqual(1, lease!.FrameNumber);
             CollectionAssert.AreEqual(
                 Gpu.Pattern(1, Width, Height),
-                Gpu.Read(device, lease.Texture)
+                Gpu.Read(device, lease.Texture.NativePointer)
             );
         }
 
@@ -324,7 +332,7 @@ public sealed class SenderReceiverTests
         using SpoutSender sender = new(name, device);
         using SpoutReceiver receiver = new(device, new() { SenderName = name });
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 3, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         using ComPtr<ID3D11Texture2D> target = Gpu.CreateTexture(device, Width, Height);
         using ComPtr<ID3D11Texture2D> wrongSize = Gpu.CreateTexture(device, 32, 32);
 
@@ -332,10 +340,10 @@ public sealed class SenderReceiverTests
             receiver,
             frame =>
             {
-                frame.CopyTo(target.Address);
+                frame.CopyTo(target.D3D11());
                 try
                 {
-                    frame.CopyTo(wrongSize.Address);
+                    frame.CopyTo(wrongSize.D3D11());
                     Assert.Fail("A destination of another size was accepted.");
                 }
                 catch (ArgumentException)
@@ -355,7 +363,7 @@ public sealed class SenderReceiverTests
         using SpoutSender sender = new(name, device);
         _ = Assert.ThrowsExactly<InvalidOperationException>(() => sender.WriteMetadata("early"u8));
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         sender.WriteMetadata("hello from Spout2.NET"u8);
         _ = Assert.ThrowsExactly<ArgumentException>(() => sender.WriteMetadata(new byte[4097]));
 
@@ -397,7 +405,7 @@ public sealed class SenderReceiverTests
         Task run = receiver.RunAsync(
             (in SpoutFrame frame) =>
             {
-                uint index = Gpu.FrameIndex(Gpu.Read(device, frame.Texture));
+                uint index = Gpu.FrameIndex(Gpu.Read(device, frame.Texture.NativePointer));
                 delivered.Add(index);
                 if (index == 10)
                 {
@@ -410,7 +418,7 @@ public sealed class SenderReceiverTests
         for (uint i = 1; i <= 10; i++)
         {
             Gpu.Upload(device, texture.Address, Gpu.Pattern(i, Width, Height), Width);
-            Assert.IsTrue(sender.Send(texture.Address));
+            Assert.IsTrue(sender.Send(texture.D3D11()));
             await Task.Delay(20, TestContext.CancellationToken);
         }
 
@@ -446,7 +454,7 @@ public sealed class SenderReceiverTests
         string name = Gpu.UniqueName("adapter");
         using SpoutSender sender = new(name, first);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(first, 1, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
 
         using SpoutReceiver receiver = new(second, new() { SenderName = name });
         Assert.AreEqual(SpoutReceiveResult.OtherAdapter, receiver.TryReceive(out SpoutFrame frame));
@@ -471,8 +479,8 @@ public sealed class SenderReceiverTests
         using SpoutDevice other = Gpu.Device();
         using SpoutSender sender = new(Gpu.UniqueName("foreign"), device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(other, 1, Width, Height);
-        _ = Assert.ThrowsExactly<ArgumentException>(() => sender.Send(texture.Address));
-        _ = Assert.ThrowsExactly<ArgumentNullException>(() => sender.Send(0));
+        _ = Assert.ThrowsExactly<ArgumentException>(() => sender.Send(texture.D3D11()));
+        _ = Assert.ThrowsExactly<ArgumentNullException>(() => sender.Send(new D3D11Texture(0)));
         Assert.IsFalse(sender.IsPublished);
     }
 

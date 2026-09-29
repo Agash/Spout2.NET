@@ -211,7 +211,10 @@ public sealed unsafe class ProtocolTests
             Assert.AreEqual(SpoutReceiveResult.Received, receiver.TryReceive(out SpoutFrame frame));
             using (frame)
             {
-                CollectionAssert.AreEqual(Gpu.Pattern(5, 32, 16), Gpu.Read(device, frame.Texture));
+                CollectionAssert.AreEqual(
+                    Gpu.Pattern(5, 32, 16),
+                    Gpu.Read(device, frame.Texture.NativePointer)
+                );
             }
         }
         finally
@@ -256,7 +259,7 @@ public sealed unsafe class ProtocolTests
         Gpu.Upload(device, texture.Address, pixels, width, bytes);
         string name = Gpu.UniqueName(format.ToString());
         using SpoutSender sender = new(name, device);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         Assert.AreEqual(format, sender.Format);
         Assert.IsTrue(SpoutSenders.TryGet(name, out SpoutSenderInfo info));
         Assert.AreEqual(format, info.Format);
@@ -266,7 +269,7 @@ public sealed unsafe class ProtocolTests
         using (frame)
         {
             Assert.AreEqual(format, frame.Format);
-            CollectionAssert.AreEqual(pixels, Gpu.Read(device, frame.Texture));
+            CollectionAssert.AreEqual(pixels, Gpu.Read(device, frame.Texture.NativePointer));
         }
     }
 

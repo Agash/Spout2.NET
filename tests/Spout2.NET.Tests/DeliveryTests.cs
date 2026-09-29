@@ -35,7 +35,7 @@ public sealed class DeliveryTests
         SpoutSender sender = new(name, device);
         using (ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height))
         {
-            Assert.IsTrue(sender.Send(texture.Address));
+            Assert.IsTrue(sender.Send(texture.D3D11()));
         }
 
         await WaitForAsync(changes, set => set.Any(s => s.Name == name));
@@ -59,7 +59,7 @@ public sealed class DeliveryTests
         using SpoutSender sender = new(name, device, new() { SignalFrameSync = true });
         using ComPtr<ID3D11Texture2D> texture = Gpu.CreateTexture(device, Width, Height);
         Gpu.Upload(device, texture.Address, Gpu.Pattern(1, Width, Height), Width);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
 
         using SpoutReceiver receiver = new(
             device,
@@ -73,7 +73,7 @@ public sealed class DeliveryTests
         Task run = receiver.RunAsync(
             (in SpoutFrame frame) =>
             {
-                uint index = Gpu.FrameIndex(Gpu.Read(device, frame.Texture));
+                uint index = Gpu.FrameIndex(Gpu.Read(device, frame.Texture.NativePointer));
                 delivered.Add(index);
                 if (index == 5)
                 {
@@ -86,7 +86,7 @@ public sealed class DeliveryTests
         {
             await Task.Delay(30, cancellationToken);
             Gpu.Upload(device, texture.Address, Gpu.Pattern(i, Width, Height), Width);
-            Assert.IsTrue(sender.Send(texture.Address));
+            Assert.IsTrue(sender.Send(texture.D3D11()));
         }
 
         await last.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
@@ -164,7 +164,7 @@ public sealed class DeliveryTests
         string name = Gpu.UniqueName("fault");
         using SpoutSender sender = new(name, device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         using SpoutReceiver receiver = new(device, new() { SenderName = name });
 
         Task run = receiver.RunAsync(
@@ -195,13 +195,13 @@ public sealed class DeliveryTests
         using ComPtr<ID3D11Texture2D> small = Gpu.Filled(device, 1, Width, Height);
         using ComPtr<ID3D11Texture2D> large = Gpu.Filled(device, 2, Width * 2, Height * 2);
 
-        Assert.IsTrue(sender.Send(small.Address));
+        Assert.IsTrue(sender.Send(small.D3D11()));
         SpoutFrameLease first = RetainOne(receiver);
         first.Dispose();
         SpoutFrameLease reused = RetainOne(receiver);
         Assert.AreEqual(Width, reused.Width);
 
-        Assert.IsTrue(sender.Send(large.Address));
+        Assert.IsTrue(sender.Send(large.D3D11()));
         using SpoutFrameLease resized = RetainOne(receiver);
         Assert.AreEqual(Width * 2, resized.Width);
         Assert.AreEqual(SpoutFormat.Bgra8Unorm, resized.Format);
@@ -209,7 +209,7 @@ public sealed class DeliveryTests
         Assert.IsGreaterThan(0L, resized.ObservedAtNanoseconds);
         CollectionAssert.AreEqual(
             Gpu.Pattern(2, Width * 2, Height * 2),
-            Gpu.Read(device, resized.Texture)
+            Gpu.Read(device, resized.Texture.NativePointer)
         );
 
         // A lease of the old size returns after the resize; it is released, not pooled.
@@ -233,7 +233,7 @@ public sealed class DeliveryTests
             Assert.AreEqual(SpoutFormat.Rgba8Unorm, frame.Format);
             try
             {
-                _ = sender.Send(texture.Address);
+                _ = sender.Send(texture.D3D11());
                 Assert.Fail("A send was accepted while a frame was open.");
             }
             catch (InvalidOperationException)
@@ -250,7 +250,7 @@ public sealed class DeliveryTests
             sender.TryBeginFrame(Width, Height, SpoutFormat.Unknown, out _)
         );
         sender.Dispose();
-        _ = Assert.ThrowsExactly<ObjectDisposedException>(() => sender.Send(texture.Address));
+        _ = Assert.ThrowsExactly<ObjectDisposedException>(() => sender.Send(texture.D3D11()));
     }
 
     [TestMethod]
@@ -262,7 +262,7 @@ public sealed class DeliveryTests
         Stopwatch clock = Stopwatch.StartNew();
         for (int i = 0; i < 12; i++)
         {
-            Assert.IsTrue(sender.Send(texture.Address));
+            Assert.IsTrue(sender.Send(texture.D3D11()));
             await Task.Delay(10, TestContext.CancellationToken);
         }
 
@@ -284,7 +284,7 @@ public sealed class DeliveryTests
         string name = Gpu.UniqueName("abandoned");
         using SpoutSender sender = new(name, device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 4, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
 
         Thread crashed = new(() => new Mutex(false, SpoutName.AccessMutex(name)).WaitOne());
         crashed.Start();
@@ -296,7 +296,7 @@ public sealed class DeliveryTests
         {
             CollectionAssert.AreEqual(
                 Gpu.Pattern(4, Width, Height),
-                Gpu.Read(device, frame.Texture)
+                Gpu.Read(device, frame.Texture.NativePointer)
             );
         }
     }
@@ -309,7 +309,7 @@ public sealed class DeliveryTests
         string name = Gpu.UniqueName("held");
         using SpoutSender sender = new(name, device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         using SpoutReceiver receiver = new(device, new() { SenderName = name });
         using ManualResetEventSlim holding = new();
         using ManualResetEventSlim release = new();
@@ -326,7 +326,7 @@ public sealed class DeliveryTests
         holding.Wait();
         try
         {
-            Assert.IsFalse(sender.Send(texture.Address));
+            Assert.IsFalse(sender.Send(texture.D3D11()));
             Assert.IsFalse(sender.TryBeginFrame(Width, Height, SpoutFormat.Bgra8Unorm, out _));
             Assert.AreEqual(1, sender.FrameNumber);
         }
@@ -336,7 +336,7 @@ public sealed class DeliveryTests
             reader.Join();
         }
 
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
     }
 
     [TestMethod]
@@ -347,7 +347,7 @@ public sealed class DeliveryTests
         string name = Gpu.UniqueName("no sync");
         using SpoutSender sender = new(name, device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         using SpoutReceiver receiver = new(
             device,
             new() { SenderName = name, WaitForFrameSync = true }
@@ -368,7 +368,7 @@ public sealed class DeliveryTests
             stop.Token
         );
         await Task.Delay(50, cancellationToken);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         await second.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
         await stop.CancelAsync();
         await run;
@@ -381,7 +381,7 @@ public sealed class DeliveryTests
         string name = Gpu.UniqueName("borrowed");
         SpoutSender sender = new(name, device);
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Assert.IsTrue(sender.Send(texture.Address));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
         SpoutReceiver receiver = new(device, new() { SenderName = name });
         Assert.AreEqual(SpoutReceiveResult.Received, receiver.TryReceive(out SpoutFrame frame));
         using (frame)

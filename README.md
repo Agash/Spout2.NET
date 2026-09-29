@@ -5,14 +5,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [Spout](https://spout.zeal.co) for .NET 11: share video frames between Windows applications in real time
-as Direct3D 11 shared textures. Frames published here appear in OBS, Resolume, TouchDesigner and every
-other Spout 2 application, and theirs can be received here.
+as GPU textures, from Direct3D 11, Direct3D 12 and OpenGL. Frames published here appear in OBS, Resolume,
+TouchDesigner and every other Spout 2 application, and theirs can be received here.
 
-Spout2.NET is a managed implementation of the Spout protocol, not a wrapper around the Spout SDK: the
-shared sender registry, texture sharing, the access lock, frame counting, frame sync and the sender
-memory buffer, over Direct3D 11 (through [CsWin32](https://github.com/microsoft/CsWin32)) and .NET's own
-named kernel objects. There is no native library to ship. It is tested byte-exact in both directions
-against the upstream Spout SDK in a separate process.
+It implements the Spout protocol: the shared sender registry, texture sharing, the access lock, frame
+counting, frame sync and the sender memory buffer, over Direct3D 11 through
+[CsWin32](https://github.com/microsoft/CsWin32) and .NET's named kernel objects. Direct3D 12 textures
+reach the shared textures through Direct3D 11 on 12, and OpenGL textures through `WGL_NV_DX_interop2`,
+as the Spout SDK's Direct3D 12 and OpenGL paths do. It is tested byte-exact in both directions against
+the Spout SDK running in a separate process.
 
 - Native AOT compatible, with no native dependencies.
 - Borrowed frames are the sender's own texture, opened on your device: receiving costs no copy.
@@ -24,6 +25,7 @@ against the upstream Spout SDK in a separate process.
 ## Requirements
 
 - Windows 10 or later, a Direct3D 11 GPU (or the WARP software rasterizer).
+- For OpenGL, a GPU driver with `WGL_NV_DX_interop2` (NVIDIA, AMD and Intel drivers have it).
 - .NET 11.
 
 ## Install
@@ -34,16 +36,25 @@ dotnet add package Spout2.NET
 
 ## Devices
 
-Spout shares textures between devices on the same GPU. A `SpoutDevice` is a Direct3D 11 device, either
-the application's own or one Spout2.NET creates:
+Spout shares textures between devices on the same GPU. A `SpoutDevice` is the graphics device frames
+are sent from and received on, and it fixes which API's textures it takes:
 
 ```csharp
+// Direct3D 11: the application's device, or one Spout2.NET creates.
 using SpoutDevice device = SpoutDevice.FromD3D11Device(myDevicePointer); // an ID3D11Device*
 using SpoutDevice device = SpoutDevice.Create();                         // the default GPU
 using SpoutDevice device = SpoutDevice.CreateFor(senderInfo);           // the GPU a sender is on
+
+// Direct3D 12: the application's device, and the queue Spout's copies are submitted to.
+using SpoutDevice device = SpoutDevice.FromD3D12Device(myD3D12Device, myCommandQueue);
+
+// OpenGL: the context current on the calling thread.
+using SpoutDevice device = SpoutDevice.ForOpenGL();
 ```
 
-`SpoutDevice.GetAdapters()` lists the GPUs.
+`SpoutDevice.GetAdapters()` lists the GPUs. Textures are typed by API: `D3D11Texture` (an
+`ID3D11Texture2D*`), `D3D12Texture` (an `ID3D12Resource*` and the state it is in) and `OpenGLTexture`
+(a texture name). An OpenGL device is used on the thread its context is current on.
 
 ## Send
 
@@ -51,18 +62,24 @@ using SpoutDevice device = SpoutDevice.CreateFor(senderInfo);           // the G
 using SpoutSender sender = new("My Output", device);
 
 // Copy a texture of yours into the shared texture on the GPU:
-sender.Send(texture); // an ID3D11Texture2D* on the device
+sender.Send(new D3D11Texture(texture));                                          // Direct3D 11
+sender.Send(new D3D12Texture(resource, D3D12ResourceState.PixelShaderResource)); // Direct3D 12
+sender.Send(new OpenGLTexture(textureName));                                     // OpenGL
 
 // Or render into the shared texture directly, with no copy:
 if (sender.TryBeginFrame(1920, 1080, SpoutFormat.Bgra8Unorm, out SpoutSenderFrame frame))
 {
     using (frame)
     {
-        Render(frame.Texture);
+        Render(frame.Texture); // on an OpenGL device, frame.OpenGLTexture
         frame.Publish();
     }
 }
 ```
+
+OpenGL's first row is the bottom of the image and Direct3D's is the top, so OpenGL textures are flipped
+on their way in and out, as the Spout SDK does by default. Pass `flip: false` for a texture that is
+already top-down.
 
 The sender joins the Spout registry with its first frame and leaves it when disposed. In OBS, add a
 **Spout2 Capture** source and choose "My Output".
@@ -70,14 +87,15 @@ The sender joins the Spout registry with its first frame and leaves it when disp
 ## Receive
 
 Frames are borrowed: `SpoutFrame` is the sender's texture under Spout's lock, valid until disposed.
-Read it, copy it (`CopyTo`), or keep a copy (`Retain`):
+Read it (`Texture`, or `OpenGLTexture` on an OpenGL device), copy it into a texture of the device's API
+(`CopyTo`), or keep a copy (`Retain`):
 
 ```csharp
 using SpoutReceiver receiver = new(device, new() { SenderName = "OBS" }); // or null: the active sender
 
 await receiver.RunAsync((in SpoutFrame frame) =>
 {
-    frame.CopyTo(encoderInput);            // GPU copy into a texture of yours
+    frame.CopyTo(new D3D12Texture(encoderInput)); // GPU copy into a texture of yours
     Console.WriteLine($"#{frame.FrameNumber} {frame.Width}x{frame.Height} {frame.Format}");
 }, cancellationToken);
 ```
@@ -116,6 +134,7 @@ await foreach (var senders in SpoutSenders.WatchAsync(TimeSpan.FromSeconds(1), c
 
 | Spout SDK (`spoutDX`) | Spout2.NET |
 | --- | --- |
+| `spoutDX`, `spoutDX12`, `spoutGL` | `SpoutDevice.FromD3D11Device`, `FromD3D12Device`, `ForOpenGL` |
 | `SetSenderName`, `SendTexture` | `new SpoutSender(name, device)`, `Send` |
 | rendering into the sender's shared texture | `TryBeginFrame`, `SpoutSenderFrame.Publish` |
 | `ReceiveTexture`, `GetSenderTexture` | `TryReceive` / `RunAsync`, `SpoutFrame.Texture` |

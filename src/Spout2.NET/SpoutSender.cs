@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Spout2.NET.Direct3D;
+using Spout2.NET.OpenGL;
 using Spout2.NET.Protocol;
 using Windows.Win32.Graphics.Direct3D11;
 
@@ -30,6 +31,7 @@ public sealed unsafe class SpoutSender : IDisposable
     private ComPtr<ID3D11Texture2D>? _texture;
     private SharedMemory? _info;
     private TextureAccess? _access;
+    private OpenGLBridge.Link? _glLink;
     private FrameCounter? _counter;
     private EventWaitHandle? _sync;
     private MetadataBuffer? _metadata;
@@ -79,10 +81,10 @@ public sealed unsafe class SpoutSender : IDisposable
     public SpoutFormat Format { get; private set; }
 
     /// <summary>
-    /// The shared texture (<c>ID3D11Texture2D*</c>), valid until the next frame that changes the size
-    /// or format; 0 before the first frame.
+    /// The shared texture on <see cref="Device"/>, valid until the next frame that changes the size or
+    /// format; a null pointer before the first frame.
     /// </summary>
-    public nint Texture => _texture is null ? 0 : (nint)_texture.Pointer;
+    public D3D11Texture SharedTexture => new(_texture is null ? 0 : _texture.Address);
 
     /// <summary>Frames published so far.</summary>
     public long FrameNumber { get; private set; }
@@ -91,43 +93,101 @@ public sealed unsafe class SpoutSender : IDisposable
     public double FramesPerSecond { get; private set; }
 
     /// <summary>
-    /// Publishes a copy of a texture as the next frame, copied on the GPU into the shared texture. The
-    /// shared texture follows the texture's size and format.
+    /// Publishes a copy of a Direct3D 11 texture as the next frame, copied on the GPU into the shared
+    /// texture, which follows the texture's size and format.
     /// </summary>
-    /// <param name="texture">The <c>ID3D11Texture2D*</c>, on <see cref="Device"/>.</param>
+    /// <param name="texture">The texture, on <see cref="Device"/>.</param>
     /// <returns>
-    /// Whether the frame was published; false when a receiver held the texture for Spout's whole
+    /// Whether the frame was published; false when a receiver held the shared texture for Spout's whole
     /// timeout (67 ms), and the frame was dropped.
     /// </returns>
-    public bool Send(nint texture)
+    public bool Send(D3D11Texture texture)
     {
         ThrowIfUnusable();
         D3D11_TEXTURE2D_DESC description = SharedTextures.DescribeOwn(
             Device,
-            texture,
+            texture.NativePointer,
             nameof(texture)
         );
-        EnsureTexture(
-            (int)description.Width,
-            (int)description.Height,
-            (SpoutFormat)description.Format
+        return Publish(
+            description,
+            shared =>
+                SharedTextures.Copy(
+                    Device,
+                    (ID3D11Texture2D*)shared,
+                    (ID3D11Texture2D*)texture.NativePointer
+                )
         );
-        if (!_access!.TryEnter())
-        {
-            return false;
-        }
+    }
 
-        try
-        {
-            SharedTextures.Copy(Device, _texture!.Pointer, (ID3D11Texture2D*)texture);
-            Published();
-        }
-        finally
-        {
-            _access.Exit();
-        }
+    /// <summary>
+    /// Publishes a copy of a Direct3D 12 texture as the next frame, copied on the GPU into the shared
+    /// texture through Direct3D 11 on 12 and submitted to the device's command queue.
+    /// </summary>
+    /// <param name="texture">
+    /// The texture, on the <c>ID3D12Device</c> <see cref="Device"/> was made from
+    /// (<see cref="SpoutDevice.FromD3D12Device"/>); it is left in the state it was handed over in.
+    /// </param>
+    /// <returns>
+    /// Whether the frame was published; false when a receiver held the shared texture for Spout's whole
+    /// timeout (67 ms), and the frame was dropped.
+    /// </returns>
+    public bool Send(D3D12Texture texture)
+    {
+        ThrowIfUnusable();
+        Device.RequireApi(SpoutGraphicsApi.Direct3D12, nameof(texture));
+        D3D11_TEXTURE2D_DESC description = Device.D3D12!.Describe(texture);
+        return Publish(
+            description,
+            shared => Device.D3D12.CopyFrom(Device, (ID3D11Texture2D*)shared, texture)
+        );
+    }
 
-        return true;
+    /// <summary>
+    /// Publishes a copy of an OpenGL texture as the next frame: a framebuffer blit into the OpenGL texture
+    /// linked to the shared texture, which follows the texture's size and is 8-bit BGRA. Call it on the
+    /// thread the device's OpenGL context is current on.
+    /// </summary>
+    /// <param name="texture">A texture of the device's OpenGL context.</param>
+    /// <param name="flip">
+    /// Flip rows on the way, so an image OpenGL shows upright is upright to Direct3D receivers, as the
+    /// Spout SDK's OpenGL senders do by default.
+    /// </param>
+    /// <returns>
+    /// Whether the frame was published; false when a receiver held the shared texture for Spout's whole
+    /// timeout (67 ms), and the frame was dropped.
+    /// </returns>
+    public bool Send(OpenGLTexture texture, bool flip = true)
+    {
+        ThrowIfUnusable();
+        Device.RequireApi(SpoutGraphicsApi.OpenGL, nameof(texture));
+        OpenGLBridge gl = Device.OpenGL!;
+        (int width, int height) = gl.Size(texture);
+        D3D11_TEXTURE2D_DESC frame = new()
+        {
+            Width = (uint)width,
+            Height = (uint)height,
+            Format = (Windows.Win32.Graphics.Dxgi.Common.DXGI_FORMAT)SpoutFormat.Bgra8Unorm,
+        };
+        return Publish(
+            frame,
+            _ =>
+            {
+                if (!_glLink!.TryLock())
+                {
+                    throw new SpoutException("The shared texture could not be locked for OpenGL.");
+                }
+
+                try
+                {
+                    gl.Blit(texture, _glLink.Texture, width, height, flip);
+                }
+                finally
+                {
+                    _glLink.Unlock();
+                }
+            }
+        );
     }
 
     /// <summary>
@@ -143,6 +203,13 @@ public sealed unsafe class SpoutSender : IDisposable
     public bool TryBeginFrame(int width, int height, SpoutFormat format, out SpoutSenderFrame frame)
     {
         ThrowIfUnusable();
+        if (Device.Api == SpoutGraphicsApi.Direct3D12)
+        {
+            throw new InvalidOperationException(
+                "A Direct3D 12 application cannot render into Spout's Direct3D 11 shared texture; send a Direct3D 12 texture instead."
+            );
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
         if (format == SpoutFormat.Unknown)
@@ -153,6 +220,13 @@ public sealed unsafe class SpoutSender : IDisposable
         EnsureTexture(width, height, format);
         if (!_access!.TryEnter())
         {
+            frame = default;
+            return false;
+        }
+
+        if (_glLink is not null && !_glLink.TryLock())
+        {
+            _access.Exit();
             frame = default;
             return false;
         }
@@ -202,8 +276,15 @@ public sealed unsafe class SpoutSender : IDisposable
         _counter?.Dispose();
         _access?.Dispose();
         _info?.Dispose();
+        _glLink?.Dispose();
         _texture?.Dispose();
     }
+
+    /// <summary>
+    /// The OpenGL texture linked to the shared texture, on a device for OpenGL; valid until the next frame
+    /// that changes the size.
+    /// </summary>
+    internal OpenGLTexture? LinkedTexture => _glLink?.Texture;
 
     internal void EndFrame(bool publish)
     {
@@ -224,6 +305,8 @@ public sealed unsafe class SpoutSender : IDisposable
 
         try
         {
+            // Unlocking the OpenGL link hands the texture back to Direct3D with the GL work finished.
+            _glLink?.Unlock();
             if (publish)
             {
                 Device.Context->Flush();
@@ -235,6 +318,28 @@ public sealed unsafe class SpoutSender : IDisposable
             _frameOpen = false;
             _access!.Exit();
         }
+    }
+
+    // Sizes the shared texture to the frame, takes Spout's lock, copies the frame in, and publishes it.
+    private bool Publish(D3D11_TEXTURE2D_DESC frame, Action<nint> copy)
+    {
+        EnsureTexture((int)frame.Width, (int)frame.Height, (SpoutFormat)frame.Format);
+        if (!_access!.TryEnter())
+        {
+            return false;
+        }
+
+        try
+        {
+            copy((nint)_texture!.Pointer);
+            Published();
+        }
+        finally
+        {
+            _access.Exit();
+        }
+
+        return true;
     }
 
     private void Published()
@@ -317,6 +422,12 @@ public sealed unsafe class SpoutSender : IDisposable
             throw;
         }
 
+        if (Device.OpenGL is { } gl)
+        {
+            _glLink?.Dispose();
+            _glLink = gl.LinkTo(texture.Pointer);
+        }
+
         _texture?.Dispose();
         _texture = texture;
         Width = width;
@@ -366,8 +477,17 @@ public readonly ref struct SpoutSenderFrame : IDisposable
 
     internal SpoutSenderFrame(SpoutSender sender) => _sender = sender;
 
-    /// <summary>The <c>ID3D11Texture2D*</c> to render into, on the sender's device.</summary>
-    public nint Texture => Sender.Texture;
+    /// <summary>The shared texture to render into, on the sender's device.</summary>
+    public D3D11Texture Texture => Sender.SharedTexture;
+
+    /// <summary>
+    /// The OpenGL texture linked to the shared texture, to render into on a device for OpenGL. Its rows
+    /// are in Direct3D order: the first is the top of the image.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The device is not for OpenGL.</exception>
+    public OpenGLTexture OpenGLTexture =>
+        Sender.LinkedTexture
+        ?? throw new InvalidOperationException("The sender's device is not for OpenGL.");
 
     /// <summary>The frame's width.</summary>
     public int Width => Sender.Width;

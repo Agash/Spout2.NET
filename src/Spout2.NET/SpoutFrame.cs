@@ -1,4 +1,5 @@
 using Spout2.NET.Direct3D;
+using Spout2.NET.OpenGL;
 using Windows.Win32.Graphics.Direct3D11;
 
 namespace Spout2.NET;
@@ -35,10 +36,11 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
     public SpoutSenderInfo Sender => Connection.Info;
 
     /// <summary>
-    /// The sender's texture (<c>ID3D11Texture2D*</c>) on the receiver's device, not AddRef'd: valid
-    /// until the frame is disposed. Read it; the sender writes it.
+    /// The sender's texture on the receiver's device, not AddRef'd: valid until the frame is disposed.
+    /// Read it; the sender writes it. On a Direct3D 12 device it is a Direct3D 11 on 12 texture: copy it
+    /// with <see cref="CopyTo(D3D12Texture)"/>.
     /// </summary>
-    public nint Texture => (nint)Connection.Texture.Pointer;
+    public D3D11Texture Texture => new(Connection.Texture.Address);
 
     /// <summary>The frame's width.</summary>
     public int Width => Connection.Info.Width;
@@ -72,34 +74,78 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
         _connection ?? throw new InvalidOperationException("The frame was not received.");
 
     /// <summary>
-    /// Copies the frame on the GPU into a texture of the application's, for example an encoder's
-    /// input surface.
+    /// Copies the frame on the GPU into a Direct3D 11 texture of the application's, for example an
+    /// encoder's input surface.
     /// </summary>
     /// <param name="destination">
-    /// The <c>ID3D11Texture2D*</c>, on the receiver's device, of the frame's size and a
-    /// copy-compatible format.
+    /// A texture on the receiver's device, of the frame's size and a copy-compatible format.
     /// </param>
-    public void CopyTo(nint destination)
+    public void CopyTo(D3D11Texture destination)
     {
         SpoutReceiver receiver = _receiver!;
         D3D11_TEXTURE2D_DESC target = SharedTextures.DescribeOwn(
             receiver.Device,
-            destination,
+            destination.NativePointer,
             nameof(destination)
         );
-        if (target.Width != (uint)Width || target.Height != (uint)Height)
+        CheckSize(target, nameof(destination));
+        SharedTextures.Copy(
+            receiver.Device,
+            (ID3D11Texture2D*)destination.NativePointer,
+            Connection.Texture.Pointer
+        );
+    }
+
+    /// <summary>
+    /// Copies the frame on the GPU into a Direct3D 12 texture of the application's, through Direct3D 11
+    /// on 12, submitted to the device's command queue.
+    /// </summary>
+    /// <param name="destination">
+    /// A texture on the <c>ID3D12Device</c> the receiver's device was made from, of the frame's size and a
+    /// copy-compatible format; it is left in the state it was handed over in.
+    /// </param>
+    public void CopyTo(D3D12Texture destination)
+    {
+        SpoutReceiver receiver = _receiver!;
+        receiver.Device.RequireApi(SpoutGraphicsApi.Direct3D12, nameof(destination));
+        CheckSize(receiver.Device.D3D12!.Describe(destination), nameof(destination));
+        receiver.Device.D3D12.CopyTo(receiver.Device, destination, Connection.Texture.Pointer);
+    }
+
+    /// <summary>
+    /// The OpenGL texture linked to the sender's, on a device for OpenGL: read it on the context's thread
+    /// while the frame is held, with no copy. Its rows are in Direct3D order: the first is the top of the
+    /// image.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The device is not for OpenGL.</exception>
+    public OpenGLTexture OpenGLTexture =>
+        Connection.OpenGL?.Texture
+        ?? throw new InvalidOperationException("The receiver's device is not for OpenGL.");
+
+    /// <summary>
+    /// Copies the frame into an OpenGL texture of the device's context with a framebuffer blit, on the
+    /// thread the context is current on.
+    /// </summary>
+    /// <param name="destination">A texture of the frame's size.</param>
+    /// <param name="flip">
+    /// Flip rows on the way, so an image upright to Direct3D is upright in OpenGL, as the Spout SDK's
+    /// OpenGL receivers do by default.
+    /// </param>
+    public void CopyTo(OpenGLTexture destination, bool flip = true)
+    {
+        SpoutReceiver receiver = _receiver!;
+        receiver.Device.RequireApi(SpoutGraphicsApi.OpenGL, nameof(destination));
+        OpenGLBridge gl = receiver.Device.OpenGL!;
+        (int width, int height) = gl.Size(destination);
+        if (width != Width || height != Height)
         {
             throw new ArgumentException(
-                $"The destination is {target.Width}x{target.Height}; the frame is {Width}x{Height}.",
+                $"The destination is {width}x{height}; the frame is {Width}x{Height}.",
                 nameof(destination)
             );
         }
 
-        SharedTextures.Copy(
-            receiver.Device,
-            (ID3D11Texture2D*)destination,
-            Connection.Texture.Pointer
-        );
+        gl.Blit(OpenGLTexture, destination, Width, Height, flip);
     }
 
     /// <summary>
@@ -108,6 +154,17 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
     /// <returns>The copy, returned to the pool when disposed.</returns>
     public SpoutFrameLease Retain() =>
         _receiver!.Retain(Connection, FrameNumber, ObservedAtNanoseconds);
+
+    private void CheckSize(D3D11_TEXTURE2D_DESC target, string parameter)
+    {
+        if (target.Width != (uint)Width || target.Height != (uint)Height)
+        {
+            throw new ArgumentException(
+                $"The destination is {target.Width}x{target.Height}; the frame is {Width}x{Height}.",
+                parameter
+            );
+        }
+    }
 
     /// <summary>Releases the sender's texture.</summary>
     public void Dispose()
@@ -143,13 +200,13 @@ public sealed unsafe class SpoutFrameLease : IDisposable
     /// <summary>The sender the frame came from.</summary>
     public SpoutSenderInfo Sender { get; }
 
-    /// <summary>The copy (<c>ID3D11Texture2D*</c>) on the receiver's device, valid until disposed.</summary>
-    public nint Texture
+    /// <summary>The copy on the receiver's device, valid until disposed.</summary>
+    public D3D11Texture Texture
     {
         get
         {
             ObjectDisposedException.ThrowIf(_texture is null, this);
-            return (nint)_texture.Pointer;
+            return new(_texture.Address);
         }
     }
 
