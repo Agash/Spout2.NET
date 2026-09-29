@@ -7,8 +7,8 @@ public enum SpoutGraphicsApi
     Direct3D11,
 
     /// <summary>
-    /// Direct3D 12: resources reach Spout's Direct3D 11 shared textures through Direct3D 11 on 12, as
-    /// the Spout SDK's SpoutDX12 does, with one GPU copy each way.
+    /// Direct3D 12: Spout's shared textures are opened on the application's device and read, written or
+    /// copied on its queue.
     /// </summary>
     Direct3D12,
 

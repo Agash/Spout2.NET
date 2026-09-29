@@ -175,7 +175,7 @@ internal sealed unsafe partial class GL
     public static partial uint glGetError();
 
     [LibraryImport("opengl32")]
-    public static partial void glFlush();
+    public static partial void glFinish();
 
     private static void* Proc(string name) => (void*)(nint)Win32.wglGetProcAddress(name).Value;
 }

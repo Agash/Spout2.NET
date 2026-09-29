@@ -6,7 +6,8 @@
   "comInterop": {
     "preserveSigMethods": [
       "IDXGIKeyedMutex.AcquireSync",
-      "ID3D11Device.OpenSharedResource"
+      "ID3D11Device.OpenSharedResource",
+      "ID3D11DeviceContext.GetData"
     ]
   }
 }

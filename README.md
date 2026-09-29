@@ -10,10 +10,10 @@ TouchDesigner and every other Spout 2 application, and theirs can be received he
 
 It implements the Spout protocol: the shared sender registry, texture sharing, the access lock, frame
 counting, frame sync and the sender memory buffer, over Direct3D 11 through
-[CsWin32](https://github.com/microsoft/CsWin32) and .NET's named kernel objects. Direct3D 12 textures
-reach the shared textures through Direct3D 11 on 12, and OpenGL textures through `WGL_NV_DX_interop2`,
-as the Spout SDK's Direct3D 12 and OpenGL paths do. It is tested byte-exact in both directions against
-the Spout SDK running in a separate process.
+[CsWin32](https://github.com/microsoft/CsWin32) and .NET's named kernel objects. Direct3D 12
+applications work natively: the shared textures are opened on their device and copied or rendered on
+their queue. OpenGL textures are linked through `WGL_NV_DX_interop2`. It is tested byte-exact in both
+directions against the Spout SDK running in a separate process.
 
 - Native AOT compatible, with no native dependencies.
 - Borrowed frames are the sender's own texture, opened on your device: receiving costs no copy.
@@ -75,7 +75,7 @@ if (sender.TryBeginFrame(1920, 1080, SpoutFormat.Bgra8Unorm, out SpoutSenderFram
 {
     using (frame)
     {
-        Render(frame.Texture); // on an OpenGL device, frame.OpenGLTexture
+        Render(frame.Texture); // or frame.D3D12Texture, frame.OpenGLTexture, by the device's API
         frame.Publish();
     }
 }
@@ -91,8 +91,8 @@ The sender joins the Spout registry with its first frame and leaves it when disp
 ## Receive
 
 Frames are borrowed: `SpoutFrame` is the sender's texture under Spout's lock, valid until disposed.
-Read it (`Texture`, or `OpenGLTexture` on an OpenGL device), copy it into a texture of the device's API
-(`CopyTo`), or keep a copy (`Retain`):
+Read it in place (`Texture`, `D3D12Texture` or `OpenGLTexture`, by the device's API), copy it into a
+texture of yours (`CopyTo`), or keep a copy (`Retain`):
 
 ```csharp
 using SpoutReceiver receiver = new(device, new() { SenderName = "OBS" }); // or null: the active sender
@@ -120,6 +120,12 @@ if (receiver.TryReceive(out SpoutFrame frame) == SpoutReceiveResult.Received)
 
 Spout's lock is a Win32 mutex owned by the receiving thread, so a borrowed frame is disposed on the
 thread that received it and never held across an `await`.
+
+The lock orders the CPU only, not the GPU. So Spout2.NET waits for the GPU work on a shared texture
+before it releases the lock: its own copies, and your reads or rendering submitted while the frame was
+held. A frame is therefore always the frame the sender counted, never the one before. Senders that
+publish without waiting, as the Spout SDK's do, can still hand over the previous frame's pixels, though
+never a torn frame.
 
 ## Senders
 

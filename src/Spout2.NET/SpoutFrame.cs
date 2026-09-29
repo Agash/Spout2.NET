@@ -1,6 +1,7 @@
 using Spout2.NET.Direct3D;
 using Spout2.NET.OpenGL;
 using Windows.Win32.Graphics.Direct3D11;
+using Windows.Win32.Graphics.Direct3D12;
 
 namespace Spout2.NET;
 
@@ -88,7 +89,7 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
             destination.NativePointer,
             nameof(destination)
         );
-        CheckSize(target, nameof(destination));
+        CheckSize(target.Width, target.Height, nameof(destination));
         SharedTextures.Copy(
             receiver.Device,
             (ID3D11Texture2D*)destination.NativePointer,
@@ -97,20 +98,39 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
     }
 
     /// <summary>
-    /// Copies the frame on the GPU into a Direct3D 12 texture of the application's, through Direct3D 11
-    /// on 12, submitted to the device's command queue.
+    /// Copies the frame on the GPU into a Direct3D 12 texture of the application's, with a command list
+    /// on the device's queue, and waits for the copy.
     /// </summary>
     /// <param name="destination">
     /// A texture on the <c>ID3D12Device</c> the receiver's device was made from, of the frame's size and a
-    /// copy-compatible format; it is left in the state it was handed over in.
+    /// copy-compatible format, in <see cref="D3D12Texture.State"/>; it is left in that state.
     /// </param>
     public void CopyTo(D3D12Texture destination)
     {
         SpoutReceiver receiver = _receiver!;
         receiver.Device.RequireApi(SpoutGraphicsApi.Direct3D12, nameof(destination));
-        CheckSize(receiver.Device.D3D12!.Describe(destination), nameof(destination));
-        receiver.Device.D3D12.CopyTo(receiver.Device, destination, Connection.Texture.Pointer);
+        D3D12Copier copier = receiver.Device.D3D12!;
+        (int width, int height, _) = copier.Describe(destination);
+        CheckSize((uint)width, (uint)height, nameof(destination));
+        copier.Copy(
+            (ID3D12Resource*)destination.Resource,
+            (D3D12_RESOURCE_STATES)destination.State,
+            Connection.D3D12!.Pointer,
+            D3D12_RESOURCE_STATES.D3D12_RESOURCE_STATE_COMMON
+        );
     }
+
+    /// <summary>
+    /// The sender's texture as a resource of the application's Direct3D 12 device, on a device for
+    /// Direct3D 12: read it with no copy while the frame is held, in
+    /// <see cref="D3D12ResourceState.Common"/>. Disposing the frame waits for the work submitted to the
+    /// device's queue by then.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The device is not for Direct3D 12.</exception>
+    public D3D12Texture D3D12Texture =>
+        Connection.D3D12 is { } resource
+            ? new(resource.Address)
+            : throw new InvalidOperationException("The receiver's device is not for Direct3D 12.");
 
     /// <summary>
     /// The OpenGL texture linked to the sender's, on a device for OpenGL: read it on the context's thread
@@ -155,12 +175,12 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
     public SpoutFrameLease Retain() =>
         _receiver!.Retain(Connection, FrameNumber, ObservedAtNanoseconds);
 
-    private void CheckSize(D3D11_TEXTURE2D_DESC target, string parameter)
+    private void CheckSize(uint width, uint height, string parameter)
     {
-        if (target.Width != (uint)Width || target.Height != (uint)Height)
+        if (width != (uint)Width || height != (uint)Height)
         {
             throw new ArgumentException(
-                $"The destination is {target.Width}x{target.Height}; the frame is {Width}x{Height}.",
+                $"The destination is {width}x{height}; the frame is {Width}x{Height}.",
                 parameter
             );
         }
@@ -183,6 +203,9 @@ public sealed unsafe class SpoutFrameLease : IDisposable
     private readonly TexturePool _pool;
     private ComPtr<ID3D11Texture2D>? _texture;
     private OpenGLBridge.Link? _openGL;
+
+    // The copy on the application's Direct3D 12 device, on a device for Direct3D 12, opened on first use.
+    private ComPtr<ID3D12Resource>? _d3d12;
 
     internal SpoutFrameLease(
         SpoutDevice device,
@@ -248,20 +271,27 @@ public sealed unsafe class SpoutFrameLease : IDisposable
     }
 
     /// <summary>
-    /// Copies the frame on the GPU into a Direct3D 12 texture of the application's, through Direct3D 11
-    /// on 12, submitted to the device's command queue.
+    /// Copies the frame on the GPU into a Direct3D 12 texture of the application's, with a command list
+    /// on the device's queue, and waits for the copy.
     /// </summary>
     /// <param name="destination">
     /// A texture on the <c>ID3D12Device</c> the receiver's device was made from, of the frame's size and a
-    /// copy-compatible format; it is left in the state it was handed over in.
+    /// copy-compatible format, in <see cref="D3D12Texture.State"/>; it is left in that state.
     /// </param>
     public void CopyTo(D3D12Texture destination)
     {
         ComPtr<ID3D11Texture2D> texture = Held;
         _device.RequireApi(SpoutGraphicsApi.Direct3D12, nameof(destination));
-        D3D11_TEXTURE2D_DESC target = _device.D3D12!.Describe(destination);
-        CheckSize((int)target.Width, (int)target.Height, nameof(destination));
-        _device.D3D12.CopyTo(_device, destination, texture.Pointer);
+        D3D12Copier copier = _device.D3D12!;
+        (int width, int height, _) = copier.Describe(destination);
+        CheckSize(width, height, nameof(destination));
+        _d3d12 ??= copier.Open(SharedTextures.ShareHandleOf(texture));
+        copier.Copy(
+            (ID3D12Resource*)destination.Resource,
+            (D3D12_RESOURCE_STATES)destination.State,
+            _d3d12.Pointer,
+            D3D12_RESOURCE_STATES.D3D12_RESOURCE_STATE_COMMON
+        );
     }
 
     /// <summary>
@@ -303,6 +333,7 @@ public sealed unsafe class SpoutFrameLease : IDisposable
         if (texture is not null)
         {
             _openGL?.Dispose();
+            _d3d12?.Dispose();
             _pool.Return(texture, Width, Height, Format);
         }
     }

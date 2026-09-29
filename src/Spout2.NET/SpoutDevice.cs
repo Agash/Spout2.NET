@@ -8,10 +8,8 @@ using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Direct3D;
 using Windows.Win32.Graphics.Direct3D10;
 using Windows.Win32.Graphics.Direct3D11;
-using Windows.Win32.Graphics.Direct3D11on12;
 using Windows.Win32.Graphics.Direct3D12;
 using Windows.Win32.Graphics.Dxgi;
-using Windows.Win32.System.Com;
 
 namespace Spout2.NET;
 
@@ -36,12 +34,14 @@ public sealed unsafe partial class SpoutDevice : IDisposable
     private readonly ILogger<SpoutDevice> _logger;
     private readonly ComPtr<ID3D11Device> _device;
     private readonly ComPtr<ID3D11DeviceContext> _context;
+    private readonly Lock _idleGate = new();
+    private ComPtr<ID3D11Query>? _idle;
 
     private SpoutDevice(
         ComPtr<ID3D11Device> device,
         ILoggerFactory? loggerFactory,
         SpoutGraphicsApi api = SpoutGraphicsApi.Direct3D11,
-        D3D12Bridge? bridge = null,
+        D3D12Copier? d3d12 = null,
         long? adapterLuid = null,
         OpenGLBridge? openGL = null
     )
@@ -50,7 +50,7 @@ public sealed unsafe partial class SpoutDevice : IDisposable
         _logger = LoggerFactory.CreateLogger<SpoutDevice>();
         _device = device;
         Api = api;
-        D3D12 = bridge;
+        D3D12 = d3d12;
         OpenGL = openGL;
         try
         {
@@ -73,7 +73,7 @@ public sealed unsafe partial class SpoutDevice : IDisposable
         catch
         {
             _context?.Dispose();
-            bridge?.Dispose();
+            d3d12?.Dispose();
             openGL?.Dispose();
             device.Dispose();
             throw;
@@ -82,7 +82,7 @@ public sealed unsafe partial class SpoutDevice : IDisposable
 
     /// <summary>
     /// The <c>ID3D11Device*</c> Spout shares on, valid while this instance is: the application's own,
-    /// one Spout2.NET created, or the Direct3D 11 on 12 device over the application's Direct3D 12 device.
+    /// one Spout2.NET created, or the one on the GPU of an application's Direct3D 12 or OpenGL device.
     /// </summary>
     public nint NativePointer => (nint)_device.Pointer;
 
@@ -102,7 +102,7 @@ public sealed unsafe partial class SpoutDevice : IDisposable
 
     internal ID3D11DeviceContext* Context => _context.Pointer;
 
-    internal D3D12Bridge? D3D12 { get; }
+    internal D3D12Copier? D3D12 { get; }
 
     internal OpenGLBridge? OpenGL { get; }
 
@@ -231,13 +231,14 @@ public sealed unsafe partial class SpoutDevice : IDisposable
     }
 
     /// <summary>
-    /// Shares from and to a Direct3D 12 application: a Direct3D 11 on 12 device over the application's
-    /// device, submitting to its queue, as the Spout SDK's SpoutDX12 does. Spout's shared textures are
-    /// Direct3D 11 textures, which Direct3D 12 cannot open, so each frame is one GPU copy through it.
+    /// Shares from and to a Direct3D 12 application natively: Spout's shared textures are opened on the
+    /// application's device and every copy is recorded on its queue. Spout's textures themselves are
+    /// created by Direct3D 11, which only can give them the DXGI shared handle Spout publishes, so the
+    /// device also holds a Direct3D 11 device on the same GPU for that and for Spout's lock.
     /// </summary>
     /// <param name="device">The application's <c>ID3D12Device*</c>. This instance holds a reference.</param>
     /// <param name="commandQueue">
-    /// The <c>ID3D12CommandQueue*</c> (a direct queue) the copies are submitted to, ordered with the
+    /// The <c>ID3D12CommandQueue*</c> (a direct queue) the copies are submitted to, ordered after the
     /// application's own work on it. This instance holds a reference.
     /// </param>
     /// <param name="loggerFactory">Where the device, and its senders and receivers, log.</param>
@@ -258,39 +259,18 @@ public sealed unsafe partial class SpoutDevice : IDisposable
             throw new ArgumentNullException(nameof(commandQueue));
         }
 
-        IUnknown* queue = (IUnknown*)commandQueue;
-        ID3D11Device* on12;
-        ID3D11DeviceContext* context;
-        Win32
-            .D3D11On12CreateDevice(
-                (IUnknown*)device,
-                (uint)D3D11_CREATE_DEVICE_FLAG.D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                [],
-                &queue,
-                1,
-                0,
-                &on12,
-                &context,
-                out _
-            )
-            .ThrowOnFailure();
-        _ = context->Release();
-        ComPtr<ID3D11Device> owned = ComPtr<ID3D11Device>.Attach(on12);
-        ComPtr<ID3D11On12Device>? bridge = owned.As<ID3D11On12Device>();
-        if (bridge is null)
+        LUID adapter = ((ID3D12Device*)device)->GetAdapterLuid();
+        long luid = ((long)adapter.HighPart << 32) | adapter.LowPart;
+        D3D12Copier copier = new((ID3D12Device*)device, (ID3D12CommandQueue*)commandQueue);
+        try
         {
-            owned.Dispose();
-            throw new SpoutException("The device is not a Direct3D 11 on 12 device.");
+            return new(CreateD3D11(luid), loggerFactory, SpoutGraphicsApi.Direct3D12, copier, luid);
         }
-
-        LUID luid = ((ID3D12Device*)device)->GetAdapterLuid();
-        return new(
-            owned,
-            loggerFactory,
-            SpoutGraphicsApi.Direct3D12,
-            new D3D12Bridge(bridge),
-            ((long)luid.HighPart << 32) | luid.LowPart
-        );
+        catch
+        {
+            copier.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -309,9 +289,38 @@ public sealed unsafe partial class SpoutDevice : IDisposable
     public void Dispose()
     {
         OpenGL?.Dispose();
+        _idle?.Dispose();
         D3D12?.Dispose();
         _context.Dispose();
         _device.Dispose();
+    }
+
+    // Returns when the GPU has finished the work submitted on the device's context so far. Spout's lock
+    // orders only the CPU: a copy still queued when the lock is released can run after the other side's
+    // next one, and deliver the previous frame or the next. So every Spout2.NET copy under the lock is
+    // waited for before the lock is released.
+    internal void WaitForGpu()
+    {
+        lock (_idleGate)
+        {
+            if (_idle is null)
+            {
+                D3D11_QUERY_DESC description = new() { Query = D3D11_QUERY.D3D11_QUERY_EVENT };
+                ID3D11Query* query;
+                Device->CreateQuery(&description, &query);
+                _idle = ComPtr<ID3D11Query>.Attach(query);
+            }
+
+            ID3D11Asynchronous* idle = (ID3D11Asynchronous*)_idle.Pointer;
+            Context->End(idle);
+            BOOL done = false;
+
+            // GetData flushes the context and reports S_FALSE until the GPU reaches the query.
+            while (Context->GetData(idle, &done, (uint)sizeof(BOOL), 0).Value == 1)
+            {
+                _ = Thread.Yield();
+            }
+        }
     }
 
     internal void RequireApi(SpoutGraphicsApi api, string parameter)

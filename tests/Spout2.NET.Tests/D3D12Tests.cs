@@ -8,8 +8,9 @@ using Windows.Win32.System.Com;
 namespace Spout2.NET.Tests;
 
 /// <summary>
-/// Direct3D 12 applications sharing through Spout: their resources reach Spout's Direct3D 11 shared
-/// textures through Direct3D 11 on 12, and must interoperate with the Spout SDK's Direct3D 11 peers.
+/// Direct3D 12 applications sharing through Spout natively: Spout's shared textures are opened on the
+/// application's device and copied on its queue, and must interoperate with the Spout SDK's Direct3D 11
+/// peers.
 /// </summary>
 [TestClass]
 public sealed class D3D12Tests
@@ -124,14 +125,48 @@ public sealed class D3D12Tests
     }
 
     [TestMethod]
-    public void D3D12Device_RefusesTheOtherApisTextures_AndRenderingIntoTheSharedTexture()
+    public unsafe void TryBeginFrame_OnD3D12_RendersIntoTheSharedTexture()
+    {
+        using D3D12Context d3d12 = D3D12Context.Create();
+        using SpoutDevice device = d3d12.SpoutDevice();
+        string name = Gpu.UniqueName("d3d12 zero copy");
+        using SpoutSender sender = new(name, device);
+        using ComPtr<ID3D12Resource> source = d3d12.CreateTexture(Width, Height);
+        Fill(device, new D3D12Texture(source.Address), 7);
+        Assert.IsTrue(
+            sender.TryBeginFrame(Width, Height, SpoutFormat.Bgra8Unorm, out SpoutSenderFrame frame)
+        );
+        using (frame)
+        {
+            // The application renders into the shared texture on its own queue; a copy stands in.
+            device.D3D12!.Copy(
+                (ID3D12Resource*)frame.D3D12Texture.Resource,
+                D3D12_RESOURCE_STATES.D3D12_RESOURCE_STATE_COMMON,
+                source.Pointer,
+                D3D12_RESOURCE_STATES.D3D12_RESOURCE_STATE_COMMON
+            );
+            frame.Publish();
+        }
+
+        using SpoutDevice receiving = SpoutDevice.Create(d3d12.AdapterLuid);
+        using SpoutReceiver receiver = new(receiving, new() { SenderName = name });
+        Assert.AreEqual(SpoutReceiveResult.Received, receiver.TryReceive(out SpoutFrame received));
+        using (received)
+        {
+            CollectionAssert.AreEqual(
+                Gpu.Pattern(7, Width, Height),
+                Gpu.Read(receiving, received.Texture.NativePointer)
+            );
+        }
+    }
+
+    [TestMethod]
+    public void D3D12Device_RefusesTheOtherApisTextures()
     {
         using D3D12Context d3d12 = D3D12Context.Create();
         using SpoutDevice device = d3d12.SpoutDevice();
         using SpoutSender sender = new(Gpu.UniqueName("d3d12 refuse"), device);
-        _ = Assert.ThrowsExactly<InvalidOperationException>(() =>
-            sender.TryBeginFrame(Width, Height, SpoutFormat.Bgra8Unorm, out _)
-        );
+        _ = Assert.ThrowsExactly<ArgumentException>(() => sender.Send(new OpenGLTexture(1)));
 
         using SpoutDevice d3d11 = SpoutDevice.Create(d3d12.AdapterLuid);
         using SpoutSender other = new(Gpu.UniqueName("d3d11 refuse"), d3d11);
@@ -148,7 +183,7 @@ public sealed class D3D12Tests
     }
 
     [TestMethod]
-    public void D3D12Sender_CyclingResources_ReusesTheirWrappers()
+    public void D3D12Sender_CyclingResources_SendsEach()
     {
         using D3D12Context d3d12 = D3D12Context.Create();
         using SpoutDevice device = d3d12.SpoutDevice();
@@ -159,7 +194,7 @@ public sealed class D3D12Tests
         ];
         try
         {
-            // More resources than the wrapper cache holds, twice round: evicted wrappers are recreated.
+            // Several of the application's resources in turn, as a swap chain or a pool hands them out.
             for (int round = 0; round < 2; round++)
             {
                 for (int i = 0; i < textures.Count; i++)
@@ -306,24 +341,96 @@ public sealed class D3D12Tests
         Assert.AreEqual(Width, info.Width);
     }
 
-    // Fills a D3D12 texture with a frame's pattern: uploaded into a Direct3D 11 texture on the device's
-    // 11-on-12 device, then copied across.
-    private static unsafe void Fill(SpoutDevice device, D3D12Texture texture, uint frame)
+    [TestMethod]
+    public void D3D11Sender_IsReadWithoutACopy_OnEveryAdapter()
     {
-        using ComPtr<ID3D11Texture2D> staging = Gpu.Filled(device, frame, Width, Height);
-        device.D3D12!.CopyTo(device, texture, staging.Pointer);
+        foreach (SpoutAdapter adapter in SpoutDevice.GetAdapters())
+        {
+            using D3D12Context d3d12 = D3D12Context.Create(adapter.Luid);
+            using SpoutDevice sending = SpoutDevice.Create(adapter.Luid);
+            string name = Gpu.UniqueName("d3d12 view");
+            using SpoutSender sender = new(name, sending);
+            using (ComPtr<ID3D11Texture2D> source = Gpu.Filled(sending, 3, Width, Height))
+            {
+                Assert.IsTrue(sender.Send(source.D3D11()));
+            }
+
+            using SpoutDevice receiving = d3d12.SpoutDevice();
+            using SpoutReceiver receiver = new(receiving, new() { SenderName = name });
+            Assert.AreEqual(SpoutReceiveResult.Received, receiver.TryReceive(out SpoutFrame frame));
+            using (frame)
+            {
+                CollectionAssert.AreEqual(
+                    Gpu.Pattern(3, Width, Height),
+                    Read(receiving, frame.D3D12Texture),
+                    adapter.Name
+                );
+            }
+        }
     }
 
-    private static unsafe byte[] Read(SpoutDevice device, D3D12Texture texture)
+    // Fills a D3D12 texture with a frame's pattern: uploaded into a shared Direct3D 11 texture, then
+    // copied across on the application's queue.
+    internal static unsafe void Fill(
+        SpoutDevice device,
+        D3D12Texture texture,
+        uint frame,
+        int width = Width,
+        int height = Height
+    )
     {
-        using ComPtr<ID3D11Texture2D> copy = Gpu.CreateTexture(device, Width, Height);
-        device.D3D12!.CopyFrom(device, copy.Pointer, texture);
+        using ComPtr<ID3D11Texture2D> staging = Gpu.CreateTexture(
+            device,
+            width,
+            height,
+            misc: D3D11_RESOURCE_MISC_FLAG.D3D11_RESOURCE_MISC_SHARED
+        );
+        Gpu.Upload(device, staging.Address, Gpu.Pattern(frame, width, height), width);
+        device.WaitForGpu();
+        using ComPtr<ID3D12Resource> view = device.D3D12!.Open(
+            SharedTextures.ShareHandleOf(staging)
+        );
+        device.D3D12.Copy(
+            (ID3D12Resource*)texture.Resource,
+            (D3D12_RESOURCE_STATES)texture.State,
+            view.Pointer,
+            D3D12_RESOURCE_STATES.D3D12_RESOURCE_STATE_COMMON
+        );
+    }
+
+    // Reads a D3D12 texture back: copied on the application's queue into a shared Direct3D 11 texture.
+    internal static unsafe byte[] Read(
+        SpoutDevice device,
+        D3D12Texture texture,
+        int width = Width,
+        int height = Height
+    )
+    {
+        using ComPtr<ID3D11Texture2D> copy = Gpu.CreateTexture(
+            device,
+            width,
+            height,
+            misc: D3D11_RESOURCE_MISC_FLAG.D3D11_RESOURCE_MISC_SHARED
+        );
+        using ComPtr<ID3D12Resource> view = device.D3D12!.Open(SharedTextures.ShareHandleOf(copy));
+        device.D3D12.Copy(
+            view.Pointer,
+            D3D12_RESOURCE_STATES.D3D12_RESOURCE_STATE_COMMON,
+            (ID3D12Resource*)texture.Resource,
+            (D3D12_RESOURCE_STATES)texture.State
+        );
         return Gpu.Read(device, copy.Address);
     }
 
     // A Direct3D 12 device and direct queue on the test adapter, as a Direct3D 12 application has them.
-    private sealed unsafe class D3D12Context : IDisposable
+    internal sealed unsafe class D3D12Context : IDisposable
     {
+        private static long DefaultLuid()
+        {
+            using SpoutDevice probe = Gpu.Device();
+            return probe.AdapterLuid;
+        }
+
         private D3D12Context(
             ComPtr<ID3D12Device> device,
             ComPtr<ID3D12CommandQueue> queue,
@@ -341,10 +448,9 @@ public sealed class D3D12Tests
 
         public long AdapterLuid { get; }
 
-        public static D3D12Context Create()
+        public static D3D12Context Create(long? adapterLuid = null)
         {
-            using SpoutDevice probe = Gpu.Device();
-            long luid = probe.AdapterLuid;
+            long luid = adapterLuid ?? DefaultLuid();
             Windows
                 .Win32.Win32.CreateDXGIFactory1(
                     out Windows.Win32.Graphics.Dxgi.IDXGIFactory1* factory

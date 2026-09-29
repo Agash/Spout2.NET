@@ -158,32 +158,50 @@ public sealed class OpenGLTests
     public async Task OpenGLSender_IsReceivedByTheSdk()
     {
         SpoutPeer.Require();
-        using OpenGLContext gl = OpenGLContext.Create();
-        using SpoutDevice device = OpenGLDevice(gl);
         string name = Gpu.UniqueName("gl to sdk");
-        using SpoutSender sender = new(name, device);
-        uint texture = gl.CreateTexture(Width, Height);
 
-        // The SDK peer receives in another process while frames are sent from this, the context's thread.
+        // The SDK peer receives in another process while frames are sent from one thread, which owns the
+        // OpenGL context: a context is current on one thread at a time, so the sending never awaits.
         Task<PeerReceipt> receiving = SpoutPeer.ReceiveAsync(
             name,
             4,
             TimeSpan.FromSeconds(10),
             TestContext.CancellationToken
         );
-        uint frame = 0;
-        while (!receiving.IsCompleted)
+        Exception? failure = null;
+        Thread sending = new(() =>
         {
-            gl.Upload(
-                texture,
-                Width,
-                Height,
-                OpenGLContext.Flip(Gpu.Pattern(++frame, Width, Height), Width, Height)
-            );
-            _ = sender.Send(new OpenGLTexture(texture));
-            Thread.Yield();
-            await Task.Delay(16, TestContext.CancellationToken).ConfigureAwait(true);
-            gl.MakeCurrent();
+            try
+            {
+                using OpenGLContext gl = OpenGLContext.Create();
+                using SpoutDevice device = OpenGLDevice(gl);
+                using SpoutSender sender = new(name, device);
+                uint texture = gl.CreateTexture(Width, Height);
+                uint frame = 0;
+                do
+                {
+                    gl.Upload(
+                        texture,
+                        Width,
+                        Height,
+                        OpenGLContext.Flip(Gpu.Pattern(++frame, Width, Height), Width, Height)
+                    );
+                    _ = sender.Send(new OpenGLTexture(texture));
+                } while (!((IAsyncResult)receiving).AsyncWaitHandle.WaitOne(16));
+
+                gl.DeleteTexture(texture);
+            }
+            catch (Exception error)
+            {
+                // Rethrown on the test's thread below.
+                failure = error;
+            }
+        });
+        sending.Start();
+        sending.Join();
+        if (failure is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(failure);
         }
 
         PeerReceipt receipt = await receiving;
@@ -198,8 +216,6 @@ public sealed class OpenGLTests
                 $"frame {received.Index}"
             );
         }
-
-        gl.DeleteTexture(texture);
     }
 
     [TestMethod]

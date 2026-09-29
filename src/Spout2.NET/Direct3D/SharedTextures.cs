@@ -8,9 +8,10 @@ namespace Spout2.NET.Direct3D;
 // The Direct3D 11 side of Spout: shared textures as spoutDirectX creates and opens them.
 internal static unsafe class SharedTextures
 {
-    // A sender's texture: a legacy shared handle (D3D11_RESOURCE_MISC_SHARED), bindable as a render
-    // target and a shader resource, one mip, one slice. This is spoutDirectX::CreateSharedDX11Texture
-    // with its defaults, which is what every SDK sender creates and every receiver can open.
+    // A sender's texture, shared by a DXGI shared handle (D3D11_RESOURCE_MISC_SHARED), bindable as a
+    // render target and a shader resource, one mip, one slice. This is
+    // spoutDirectX::CreateSharedDX11Texture with its defaults, which is what every SDK sender creates
+    // and every receiver can open.
     public static ComPtr<ID3D11Texture2D> CreateShared(
         SpoutDevice device,
         int width,
@@ -38,14 +39,7 @@ internal static unsafe class SharedTextures
         ComPtr<ID3D11Texture2D> owned = ComPtr<ID3D11Texture2D>.Attach(texture);
         try
         {
-            using ComPtr<IDXGIResource> resource =
-                owned.As<IDXGIResource>()
-                ?? throw new SpoutException("The shared texture is not a DXGI resource.");
-            HANDLE handle;
-            resource.Pointer->GetSharedHandle(&handle);
-
-            // Legacy shared handles are 32-bit values by design; Spout's registry stores 32 bits.
-            shareHandle = (uint)(nint)handle.Value;
+            shareHandle = ShareHandleOf(owned);
             return owned;
         }
         catch
@@ -53,6 +47,19 @@ internal static unsafe class SharedTextures
             owned.Dispose();
             throw;
         }
+    }
+
+    // The DXGI shared handle of a texture created with D3D11_RESOURCE_MISC_SHARED. These handles are
+    // machine-wide 32-bit values, so any process opens one by its number; Spout's registry stores
+    // those 32 bits.
+    public static uint ShareHandleOf(ComPtr<ID3D11Texture2D> texture)
+    {
+        using ComPtr<IDXGIResource> resource =
+            texture.As<IDXGIResource>()
+            ?? throw new SpoutException("The shared texture is not a DXGI resource.");
+        HANDLE handle;
+        resource.Pointer->GetSharedHandle(&handle);
+        return (uint)(nint)handle.Value;
     }
 
     // Opens a sender's texture on this device. Fails when the texture lives on another GPU (or the

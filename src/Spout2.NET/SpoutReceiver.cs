@@ -6,6 +6,7 @@ using Spout2.NET.OpenGL;
 using Spout2.NET.Protocol;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Direct3D11;
+using Windows.Win32.Graphics.Direct3D12;
 
 namespace Spout2.NET;
 
@@ -211,7 +212,7 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
                 return SpoutReceiveResult.OtherAdapter;
             }
 
-            _connection = new Connection(sender, texture, Device.OpenGL);
+            _connection = new Connection(sender, texture, Device.OpenGL, Device.D3D12);
             _refused = null;
             changed = true;
             if (previous?.Name == sender.Name)
@@ -235,6 +236,13 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
                 break;
             default:
                 break;
+        }
+
+        // A keyed mutex orders the sender's GPU work before this device's Direct3D 11 work only; Direct3D
+        // 12 reads it once that point is reached.
+        if (connection.Access.IsKeyed && Device.D3D12 is not null)
+        {
+            Device.WaitForGpu();
         }
 
         // On a device for OpenGL the frame is also locked for OpenGL, on this thread's context.
@@ -340,8 +348,29 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
         }
 
         _frameOpen = false;
-        connection.OpenGL?.Unlock();
-        connection.Access.Exit();
+        try
+        {
+            // The application's reads and copies of the frame finish before the sender may write again
+            // (SpoutDevice.WaitForGpu says why).
+            if (connection.OpenGL is { } link)
+            {
+                GL.glFinish();
+                link.Unlock();
+            }
+
+            if (Device.D3D12 is { } d3d12)
+            {
+                d3d12.Drain();
+            }
+            else if (!connection.Access.IsKeyed)
+            {
+                Device.WaitForGpu();
+            }
+        }
+        finally
+        {
+            connection.Access.Exit();
+        }
     }
 
     internal SpoutFrameLease Retain(Connection connection, long frameNumber, long observedAt)
@@ -349,6 +378,12 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
         SpoutSenderInfo sender = connection.Info;
         ComPtr<ID3D11Texture2D> texture = _pool.Rent(sender.Width, sender.Height, sender.Format);
         SharedTextures.Copy(Device, texture.Pointer, connection.Texture.Pointer);
+        if (Device.D3D12 is not null)
+        {
+            // The copy is read from Direct3D 12 next, which does not wait for Direct3D 11.
+            Device.WaitForGpu();
+        }
+
         return new SpoutFrameLease(Device, _pool, texture, sender, frameNumber, observedAt);
     }
 
@@ -552,7 +587,8 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
         public Connection(
             SpoutSenderInfo info,
             ComPtr<ID3D11Texture2D> texture,
-            OpenGLBridge? openGL
+            OpenGLBridge? openGL,
+            D3D12Copier? d3d12
         )
         {
             Info = info;
@@ -562,9 +598,11 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
                 Access = TextureAccess.For(info.Name, texture);
                 Counter = FrameCounter.OpenOrCreate(info.Name);
                 OpenGL = openGL?.LinkTo(texture.Pointer);
+                D3D12 = d3d12?.Open(info.ShareHandle);
             }
             catch
             {
+                OpenGL?.Dispose();
                 Counter?.Dispose();
                 Access?.Dispose();
                 texture.Dispose();
@@ -574,6 +612,9 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
 
         // The OpenGL texture linked to the sender's, on a device for OpenGL.
         public OpenGLBridge.Link? OpenGL { get; }
+
+        // The sender's texture on the application's Direct3D 12 device, on a device for Direct3D 12.
+        public ComPtr<ID3D12Resource>? D3D12 { get; }
 
         public SpoutSenderInfo Info { get; }
 
@@ -591,6 +632,7 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
         {
             Metadata?.Dispose();
             OpenGL?.Dispose();
+            D3D12?.Dispose();
             Counter.Dispose();
             Access.Dispose();
             Texture.Dispose();

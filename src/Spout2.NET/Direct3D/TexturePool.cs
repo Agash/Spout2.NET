@@ -31,7 +31,10 @@ internal sealed class TexturePool(SpoutDevice device) : IDisposable
             }
         }
 
-        return SharedTextures.CreateCopyTarget(device, width, height, format);
+        // Copies a Direct3D 12 application reads are opened there by their DXGI shared handle.
+        return device.Api == SpoutGraphicsApi.Direct3D12
+            ? SharedTextures.CreateShared(device, width, height, format, out _)
+            : SharedTextures.CreateCopyTarget(device, width, height, format);
     }
 
     public void Return(ComPtr<ID3D11Texture2D> texture, int width, int height, SpoutFormat format)

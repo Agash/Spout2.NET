@@ -45,6 +45,10 @@ internal sealed unsafe class TextureAccess : IDisposable
             : new(new Mutex(false, SpoutName.AccessMutex(sender)), null);
     }
 
+    // Whether the lock is the texture's keyed mutex, which also orders the GPU work of the Direct3D 11
+    // devices that take it.
+    public bool IsKeyed => _keyed is not null;
+
     // Must be released on the thread that entered: a Win32 mutex is owned by a thread.
     public AccessResult TryEnter()
     {
