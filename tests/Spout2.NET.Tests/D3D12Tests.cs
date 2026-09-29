@@ -85,6 +85,45 @@ public sealed class D3D12Tests
     }
 
     [TestMethod]
+    public void KeptFrame_IsCopiedIntoAD3D12Texture_AfterTheBorrow()
+    {
+        using D3D12Context d3d12 = D3D12Context.Create();
+        using SpoutDevice sending = SpoutDevice.Create(d3d12.AdapterLuid);
+        string name = Gpu.UniqueName("d3d12 lease");
+        using SpoutSender sender = new(name, sending);
+        using (ComPtr<ID3D11Texture2D> source = Gpu.Filled(sending, 9, Width, Height))
+        {
+            Assert.IsTrue(sender.Send(source.D3D11()));
+        }
+
+        using SpoutDevice receiving = d3d12.SpoutDevice();
+        using SpoutReceiver receiver = new(receiving, new() { SenderName = name });
+        SpoutFrameLease lease;
+        Assert.AreEqual(SpoutReceiveResult.Received, receiver.TryReceive(out SpoutFrame frame));
+        using (frame)
+        {
+            lease = frame.Retain();
+        }
+
+        // The sender moves on; the kept frame does not.
+        using (ComPtr<ID3D11Texture2D> source = Gpu.Filled(sending, 10, Width, Height))
+        {
+            Assert.IsTrue(sender.Send(source.D3D11()));
+        }
+
+        using ComPtr<ID3D12Resource> target = d3d12.CreateTexture(Width, Height);
+        D3D12Texture resource = new(target.Address);
+        using (lease)
+        {
+            lease.CopyTo(resource);
+            _ = Assert.ThrowsExactly<ArgumentException>(() => lease.CopyTo(new OpenGLTexture(1)));
+        }
+
+        CollectionAssert.AreEqual(Gpu.Pattern(9, Width, Height), Read(receiving, resource));
+        _ = Assert.ThrowsExactly<ObjectDisposedException>(() => lease.CopyTo(resource));
+    }
+
+    [TestMethod]
     public void D3D12Device_RefusesTheOtherApisTextures_AndRenderingIntoTheSharedTexture()
     {
         using D3D12Context d3d12 = D3D12Context.Create();

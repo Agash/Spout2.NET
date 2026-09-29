@@ -349,7 +349,7 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
         SpoutSenderInfo sender = connection.Info;
         ComPtr<ID3D11Texture2D> texture = _pool.Rent(sender.Width, sender.Height, sender.Format);
         SharedTextures.Copy(Device, texture.Pointer, connection.Texture.Pointer);
-        return new SpoutFrameLease(_pool, texture, sender, frameNumber, observedAt);
+        return new SpoutFrameLease(Device, _pool, texture, sender, frameNumber, observedAt);
     }
 
     private void Run(

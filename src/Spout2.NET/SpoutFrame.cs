@@ -179,10 +179,13 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
 /// <summary>A copy of a frame, kept past its borrow (<see cref="SpoutFrame.Retain"/>).</summary>
 public sealed unsafe class SpoutFrameLease : IDisposable
 {
+    private readonly SpoutDevice _device;
     private readonly TexturePool _pool;
     private ComPtr<ID3D11Texture2D>? _texture;
+    private OpenGLBridge.Link? _openGL;
 
     internal SpoutFrameLease(
+        SpoutDevice device,
         TexturePool pool,
         ComPtr<ID3D11Texture2D> texture,
         SpoutSenderInfo sender,
@@ -190,6 +193,7 @@ public sealed unsafe class SpoutFrameLease : IDisposable
         long observedAt
     )
     {
+        _device = device;
         _pool = pool;
         _texture = texture;
         Sender = sender;
@@ -201,14 +205,7 @@ public sealed unsafe class SpoutFrameLease : IDisposable
     public SpoutSenderInfo Sender { get; }
 
     /// <summary>The copy on the receiver's device, valid until disposed.</summary>
-    public D3D11Texture Texture
-    {
-        get
-        {
-            ObjectDisposedException.ThrowIf(_texture is null, this);
-            return new(_texture.Address);
-        }
-    }
+    public D3D11Texture Texture => new(Held.Address);
 
     /// <summary>The frame's width.</summary>
     public int Width => Sender.Width;
@@ -225,13 +222,99 @@ public sealed unsafe class SpoutFrameLease : IDisposable
     /// <summary>When the frame was observed, in nanoseconds of the monotonic clock.</summary>
     public long ObservedAtNanoseconds { get; }
 
+    private ComPtr<ID3D11Texture2D> Held
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_texture is null, this);
+            return _texture;
+        }
+    }
+
+    /// <summary>Copies the frame on the GPU into a Direct3D 11 texture of the application's.</summary>
+    /// <param name="destination">
+    /// A texture on the receiver's device, of the frame's size and a copy-compatible format.
+    /// </param>
+    public void CopyTo(D3D11Texture destination)
+    {
+        ComPtr<ID3D11Texture2D> texture = Held;
+        D3D11_TEXTURE2D_DESC target = SharedTextures.DescribeOwn(
+            _device,
+            destination.NativePointer,
+            nameof(destination)
+        );
+        CheckSize((int)target.Width, (int)target.Height, nameof(destination));
+        SharedTextures.Copy(_device, (ID3D11Texture2D*)destination.NativePointer, texture.Pointer);
+    }
+
+    /// <summary>
+    /// Copies the frame on the GPU into a Direct3D 12 texture of the application's, through Direct3D 11
+    /// on 12, submitted to the device's command queue.
+    /// </summary>
+    /// <param name="destination">
+    /// A texture on the <c>ID3D12Device</c> the receiver's device was made from, of the frame's size and a
+    /// copy-compatible format; it is left in the state it was handed over in.
+    /// </param>
+    public void CopyTo(D3D12Texture destination)
+    {
+        ComPtr<ID3D11Texture2D> texture = Held;
+        _device.RequireApi(SpoutGraphicsApi.Direct3D12, nameof(destination));
+        D3D11_TEXTURE2D_DESC target = _device.D3D12!.Describe(destination);
+        CheckSize((int)target.Width, (int)target.Height, nameof(destination));
+        _device.D3D12.CopyTo(_device, destination, texture.Pointer);
+    }
+
+    /// <summary>
+    /// Copies the frame into an OpenGL texture of the device's context with a framebuffer blit, on the
+    /// thread the context is current on.
+    /// </summary>
+    /// <param name="destination">A texture of the frame's size.</param>
+    /// <param name="flip">
+    /// Flip rows on the way, so an image upright to Direct3D is upright in OpenGL, as the Spout SDK's
+    /// OpenGL receivers do by default.
+    /// </param>
+    public void CopyTo(OpenGLTexture destination, bool flip = true)
+    {
+        ComPtr<ID3D11Texture2D> texture = Held;
+        _device.RequireApi(SpoutGraphicsApi.OpenGL, nameof(destination));
+        OpenGLBridge gl = _device.OpenGL!;
+        (int width, int height) = gl.Size(destination);
+        CheckSize(width, height, nameof(destination));
+        _openGL ??= gl.LinkTo(texture.Pointer);
+        if (!_openGL.TryLock())
+        {
+            throw new SpoutException("The kept frame could not be locked for OpenGL.");
+        }
+
+        try
+        {
+            gl.Blit(_openGL.Texture, destination, Width, Height, flip);
+        }
+        finally
+        {
+            _openGL.Unlock();
+        }
+    }
+
     /// <summary>Returns the copy to the receiver's pool.</summary>
     public void Dispose()
     {
         ComPtr<ID3D11Texture2D>? texture = Interlocked.Exchange(ref _texture, null);
         if (texture is not null)
         {
+            _openGL?.Dispose();
             _pool.Return(texture, Width, Height, Format);
+        }
+    }
+
+    private void CheckSize(int width, int height, string parameter)
+    {
+        if (width != Width || height != Height)
+        {
+            throw new ArgumentException(
+                $"The destination is {width}x{height}; the frame is {Width}x{Height}.",
+                parameter
+            );
         }
     }
 }

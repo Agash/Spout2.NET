@@ -84,6 +84,51 @@ public sealed class OpenGLTests
     }
 
     [TestMethod]
+    public void KeptFrame_IsCopiedIntoAnOpenGLTexture_AfterTheBorrow()
+    {
+        using OpenGLContext gl = OpenGLContext.Create();
+        using SpoutDevice device = OpenGLDevice(gl);
+        using SpoutDevice d3d11 = SpoutDevice.Create(device.AdapterLuid);
+        string name = Gpu.UniqueName("gl lease");
+        using SpoutSender sender = new(name, d3d11);
+        using (ComPtr<ID3D11Texture2D> source = Gpu.Filled(d3d11, 14, Width, Height))
+        {
+            Assert.IsTrue(sender.Send(source.D3D11()));
+        }
+
+        using SpoutReceiver receiver = new(device, new() { SenderName = name });
+        SpoutFrameLease lease;
+        Assert.AreEqual(SpoutReceiveResult.Received, receiver.TryReceive(out SpoutFrame frame));
+        using (frame)
+        {
+            lease = frame.Retain();
+        }
+
+        using (ComPtr<ID3D11Texture2D> source = Gpu.Filled(d3d11, 15, Width, Height))
+        {
+            Assert.IsTrue(sender.Send(source.D3D11()));
+        }
+
+        byte[] image = Gpu.Pattern(14, Width, Height);
+        uint flipped = gl.CreateTexture(Width, Height);
+        uint straight = gl.CreateTexture(Width, Height);
+        using (lease)
+        {
+            lease.CopyTo(new OpenGLTexture(flipped));
+            lease.CopyTo(new OpenGLTexture(straight), flip: false);
+            _ = Assert.ThrowsExactly<ArgumentException>(() => lease.CopyTo(new D3D12Texture(1)));
+        }
+
+        CollectionAssert.AreEqual(
+            OpenGLContext.Flip(image, Width, Height),
+            gl.Read(flipped, Width, Height)
+        );
+        CollectionAssert.AreEqual(image, gl.Read(straight, Width, Height));
+        gl.DeleteTexture(flipped);
+        gl.DeleteTexture(straight);
+    }
+
+    [TestMethod]
     public void TryBeginFrame_RendersIntoTheLinkedTexture()
     {
         using OpenGLContext gl = OpenGLContext.Create();
