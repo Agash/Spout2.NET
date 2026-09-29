@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
 using Spout2.NET.Direct3D;
 using Spout2.NET.OpenGL;
 using Spout2.NET.Protocol;
@@ -25,8 +26,9 @@ public sealed record SpoutSenderOptions
 /// The sender appears in the Spout registry with its first frame, when its size and format are known,
 /// and leaves it when disposed. A sender is used from one thread at a time.
 /// </remarks>
-public sealed unsafe class SpoutSender : IDisposable
+public sealed unsafe partial class SpoutSender : IDisposable
 {
+    private readonly ILogger<SpoutSender> _logger;
     private readonly SpoutSenderOptions _options;
     private ComPtr<ID3D11Texture2D>? _texture;
     private SharedMemory? _info;
@@ -60,6 +62,7 @@ public sealed unsafe class SpoutSender : IDisposable
         Name = name;
         Device = device;
         _options = options ?? new();
+        _logger = device.LoggerFactory.CreateLogger<SpoutSender>();
     }
 
     /// <summary>The sender's name.</summary>
@@ -218,7 +221,7 @@ public sealed unsafe class SpoutSender : IDisposable
         }
 
         EnsureTexture(width, height, format);
-        if (!_access!.TryEnter())
+        if (!TryEnterAccess())
         {
             frame = default;
             return false;
@@ -226,7 +229,8 @@ public sealed unsafe class SpoutSender : IDisposable
 
         if (_glLink is not null && !_glLink.TryLock())
         {
-            _access.Exit();
+            _access!.Exit();
+            LogOpenGLLockFailed(Name);
             frame = default;
             return false;
         }
@@ -269,6 +273,7 @@ public sealed unsafe class SpoutSender : IDisposable
         if (_texture is not null)
         {
             SenderRegistry.Release(Name);
+            LogLeft(Name, FrameNumber);
         }
 
         _metadata?.Dispose();
@@ -324,7 +329,7 @@ public sealed unsafe class SpoutSender : IDisposable
     private bool Publish(D3D11_TEXTURE2D_DESC frame, Action<nint> copy)
     {
         EnsureTexture((int)frame.Width, (int)frame.Height, (SpoutFormat)frame.Format);
-        if (!_access!.TryEnter())
+        if (!TryEnterAccess())
         {
             return false;
         }
@@ -336,7 +341,7 @@ public sealed unsafe class SpoutSender : IDisposable
         }
         finally
         {
-            _access.Exit();
+            _access!.Exit();
         }
 
         return true;
@@ -398,10 +403,12 @@ public sealed unsafe class SpoutSender : IDisposable
                 }
 
                 SenderRegistry.Register(Name);
+                LogRegistered(Name, width, height, format, Device.AdapterName);
             }
             else
             {
                 WriteInfo(width, height, format, shareHandle);
+                LogResized(Name, width, height, format);
             }
         }
         catch
@@ -464,6 +471,69 @@ public sealed unsafe class SpoutSender : IDisposable
             throw new InvalidOperationException("A frame is open; publish or dispose it first.");
         }
     }
+
+    private bool TryEnterAccess()
+    {
+        switch (_access!.TryEnter())
+        {
+            case AccessResult.Held:
+                return true;
+            case AccessResult.Abandoned:
+                LogAbandoned(Name);
+                return true;
+            default:
+                LogDropped(Name);
+                return false;
+        }
+    }
+
+    [LoggerMessage(
+        EventId = 10,
+        Level = LogLevel.Information,
+        Message = "Spout sender \"{Name}\" published {Width}x{Height} {Format} on {AdapterName}"
+    )]
+    private partial void LogRegistered(
+        string name,
+        int width,
+        int height,
+        SpoutFormat format,
+        string adapterName
+    );
+
+    [LoggerMessage(
+        EventId = 11,
+        Level = LogLevel.Debug,
+        Message = "Spout sender \"{Name}\" resized its shared texture to {Width}x{Height} {Format}"
+    )]
+    private partial void LogResized(string name, int width, int height, SpoutFormat format);
+
+    [LoggerMessage(
+        EventId = 12,
+        Level = LogLevel.Debug,
+        Message = "Spout sender \"{Name}\" dropped a frame: a receiver held the shared texture for Spout's whole timeout"
+    )]
+    private partial void LogDropped(string name);
+
+    [LoggerMessage(
+        EventId = 13,
+        Level = LogLevel.Warning,
+        Message = "Spout sender \"{Name}\" took the shared texture's lock from a process that died holding it"
+    )]
+    private partial void LogAbandoned(string name);
+
+    [LoggerMessage(
+        EventId = 14,
+        Level = LogLevel.Warning,
+        Message = "Spout sender \"{Name}\" dropped a frame: the shared texture could not be locked for OpenGL"
+    )]
+    private partial void LogOpenGLLockFailed(string name);
+
+    [LoggerMessage(
+        EventId = 15,
+        Level = LogLevel.Information,
+        Message = "Spout sender \"{Name}\" left after {Frames} frames"
+    )]
+    private partial void LogLeft(string name, long frames);
 }
 
 /// <summary>

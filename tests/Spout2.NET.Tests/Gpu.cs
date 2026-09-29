@@ -104,14 +104,16 @@ internal static unsafe class Gpu
 
     // A device on the machine's first hardware GPU, or on the software adapter (WARP) where there is
     // none, as on CI runners. Spout works the same on either.
-    public static SpoutDevice Device()
+    public static SpoutDevice Device(
+        Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null
+    )
     {
         SpoutAdapter[] adapters = [.. SpoutDevice.GetAdapters()];
         SpoutAdapter chosen = adapters.FirstOrDefault(static a => !a.IsSoftware)
             is { Luid: not 0 } gpu
             ? gpu
             : adapters.First(static a => a.IsSoftware);
-        return SpoutDevice.Create(chosen.Luid);
+        return SpoutDevice.Create(chosen.Luid, loggerFactory);
     }
 
     public static int BytesPerPixel(SpoutFormat format) =>

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
 using Spout2.NET.Direct3D;
 using Spout2.NET.OpenGL;
 using Spout2.NET.Protocol;
@@ -73,11 +74,15 @@ public sealed record SpoutReceiverOptions
 /// one costs no copy; <see cref="SpoutFrame.Retain"/> copies a frame to keep it past the borrow.
 /// </summary>
 /// <remarks>A receiver is used from one thread at a time.</remarks>
-public sealed unsafe class SpoutReceiver : IDisposable
+public sealed unsafe partial class SpoutReceiver : IDisposable
 {
+    private readonly ILogger<SpoutReceiver> _logger;
     private readonly SpoutReceiverOptions _options;
     private readonly TexturePool _pool;
     private Connection? _connection;
+
+    // The sender last refused (on another GPU, or sharing CPU memory), so a poll loop reports it once.
+    private string? _refused;
     private bool _frameOpen;
     private int _frameThread;
     private bool _running;
@@ -105,6 +110,7 @@ public sealed unsafe class SpoutReceiver : IDisposable
             TimeSpan.Zero
         );
         Device = device;
+        _logger = device.LoggerFactory.CreateLogger<SpoutReceiver>();
         _pool = new TexturePool(device);
     }
 
@@ -155,7 +161,13 @@ public sealed unsafe class SpoutReceiver : IDisposable
         string? name = _options.SenderName ?? SenderRegistry.GetActive();
         if (name is null || !SenderRegistry.TryReadInfo(name, out SharedTextureInfo info))
         {
+            if (_connection is { } lost)
+            {
+                LogLost(lost.Info.Name);
+            }
+
             Disconnect();
+            _refused = null;
             return SpoutReceiveResult.NoSender;
         }
 
@@ -163,12 +175,18 @@ public sealed unsafe class SpoutReceiver : IDisposable
         if (sender.ShareHandle == 0)
         {
             Disconnect();
+            if (Refuse(name))
+            {
+                LogCpuSender(name);
+            }
+
             return SpoutReceiveResult.CpuSender;
         }
 
         bool changed = false;
         if (_connection is not { } current || current.Info != sender)
         {
+            SpoutSenderInfo? previous = _connection?.Info;
             Disconnect();
             ComPtr<ID3D11Texture2D>? texture = SharedTextures.TryOpenShared(
                 Device,
@@ -177,27 +195,53 @@ public sealed unsafe class SpoutReceiver : IDisposable
             );
             if (texture is null)
             {
-                return result == HRESULT.E_INVALIDARG
-                    ? SpoutReceiveResult.OtherAdapter
-                    : throw new SpoutException(
+                if (result != HRESULT.E_INVALIDARG)
+                {
+                    LogOpenFailed(name, result.Value);
+                    throw new SpoutException(
                         $"The texture of sender \"{name}\" could not be opened ({result})."
                     );
+                }
+
+                if (Refuse(name))
+                {
+                    LogOtherAdapter(name, Device.AdapterName);
+                }
+
+                return SpoutReceiveResult.OtherAdapter;
             }
 
             _connection = new Connection(sender, texture, Device.OpenGL);
+            _refused = null;
             changed = true;
+            if (previous?.Name == sender.Name)
+            {
+                LogSenderChanged(name, sender.Width, sender.Height, sender.Format);
+            }
+            else
+            {
+                LogConnected(name, sender.Width, sender.Height, sender.Format, Device.AdapterName);
+            }
         }
 
         Connection connection = _connection;
-        if (!connection.Access.TryEnter())
+        switch (connection.Access.TryEnter())
         {
-            return SpoutReceiveResult.Busy;
+            case AccessResult.Busy:
+                LogBusy(name);
+                return SpoutReceiveResult.Busy;
+            case AccessResult.Abandoned:
+                LogAbandoned(name);
+                break;
+            default:
+                break;
         }
 
         // On a device for OpenGL the frame is also locked for OpenGL, on this thread's context.
         if (connection.OpenGL is { } link && !link.TryLock())
         {
             connection.Access.Exit();
+            LogOpenGLLockFailed(name);
             return SpoutReceiveResult.Busy;
         }
 
@@ -370,7 +414,8 @@ public sealed unsafe class SpoutReceiver : IDisposable
         }
         catch (Exception error)
         {
-            // Rethrown through the task: the caller awaits RunAsync and sees the failure there.
+            // Also rethrown through the task: the caller awaits RunAsync and sees the failure there.
+            LogRunFailed(error, _options.SenderName ?? "the active sender");
             completion.TrySetException(error);
         }
         finally
@@ -409,6 +454,94 @@ public sealed unsafe class SpoutReceiver : IDisposable
         _connection?.Dispose();
         _connection = null;
     }
+
+    // Whether this is a new refusal, to be reported.
+    private bool Refuse(string name)
+    {
+        if (_refused == name)
+        {
+            return false;
+        }
+
+        _refused = name;
+        return true;
+    }
+
+    [LoggerMessage(
+        EventId = 30,
+        Level = LogLevel.Information,
+        Message = "Spout receiver connected to sender \"{Name}\": {Width}x{Height} {Format} on {AdapterName}"
+    )]
+    private partial void LogConnected(
+        string name,
+        int width,
+        int height,
+        SpoutFormat format,
+        string adapterName
+    );
+
+    [LoggerMessage(
+        EventId = 31,
+        Level = LogLevel.Debug,
+        Message = "Spout sender \"{Name}\" changed its shared texture to {Width}x{Height} {Format}"
+    )]
+    private partial void LogSenderChanged(string name, int width, int height, SpoutFormat format);
+
+    [LoggerMessage(
+        EventId = 32,
+        Level = LogLevel.Information,
+        Message = "Spout receiver lost sender \"{Name}\""
+    )]
+    private partial void LogLost(string name);
+
+    [LoggerMessage(
+        EventId = 33,
+        Level = LogLevel.Warning,
+        Message = "Spout sender \"{Name}\" shares a texture on another GPU than {AdapterName}; receive it on a device made with SpoutDevice.CreateFor"
+    )]
+    private partial void LogOtherAdapter(string name, string adapterName);
+
+    [LoggerMessage(
+        EventId = 34,
+        Level = LogLevel.Warning,
+        Message = "Spout sender \"{Name}\" shares CPU memory (Spout 2.006 memory share), which Spout2.NET does not receive"
+    )]
+    private partial void LogCpuSender(string name);
+
+    [LoggerMessage(
+        EventId = 35,
+        Level = LogLevel.Error,
+        Message = "The texture of Spout sender \"{Name}\" could not be opened (HRESULT {Result:X8})"
+    )]
+    private partial void LogOpenFailed(string name, int result);
+
+    [LoggerMessage(
+        EventId = 36,
+        Level = LogLevel.Debug,
+        Message = "Spout sender \"{Name}\" held its texture for Spout's whole timeout; no frame this time"
+    )]
+    private partial void LogBusy(string name);
+
+    [LoggerMessage(
+        EventId = 37,
+        Level = LogLevel.Warning,
+        Message = "Spout receiver took the texture lock of sender \"{Name}\" from a process that died holding it"
+    )]
+    private partial void LogAbandoned(string name);
+
+    [LoggerMessage(
+        EventId = 38,
+        Level = LogLevel.Warning,
+        Message = "The texture of Spout sender \"{Name}\" could not be locked for OpenGL; no frame this time"
+    )]
+    private partial void LogOpenGLLockFailed(string name);
+
+    [LoggerMessage(
+        EventId = 39,
+        Level = LogLevel.Error,
+        Message = "Spout receiver for {Sender} stopped on an error"
+    )]
+    private partial void LogRunFailed(Exception error, string sender);
 
     private static long MonotonicNanoseconds() =>
         (long)((Int128)Stopwatch.GetTimestamp() * 1_000_000_000 / Stopwatch.Frequency);

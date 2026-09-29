@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Spout2.NET.Direct3D;
 using Spout2.NET.OpenGL;
 using Windows.Win32;
@@ -29,19 +31,23 @@ public readonly record struct SpoutAdapter(long Luid, string Name, bool IsSoftwa
 /// the device is switched to Direct3D's multithread protection (<c>ID3D10Multithread</c>), which
 /// serializes the application's own use of the context with Spout2.NET's.
 /// </remarks>
-public sealed unsafe class SpoutDevice : IDisposable
+public sealed unsafe partial class SpoutDevice : IDisposable
 {
+    private readonly ILogger<SpoutDevice> _logger;
     private readonly ComPtr<ID3D11Device> _device;
     private readonly ComPtr<ID3D11DeviceContext> _context;
 
     private SpoutDevice(
         ComPtr<ID3D11Device> device,
+        ILoggerFactory? loggerFactory,
         SpoutGraphicsApi api = SpoutGraphicsApi.Direct3D11,
         D3D12Bridge? bridge = null,
         long? adapterLuid = null,
         OpenGLBridge? openGL = null
     )
     {
+        LoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        _logger = LoggerFactory.CreateLogger<SpoutDevice>();
         _device = device;
         Api = api;
         D3D12 = bridge;
@@ -62,6 +68,7 @@ public sealed unsafe class SpoutDevice : IDisposable
             AdapterLuid = adapterLuid ?? DxgiLuid(device);
             AdapterName =
                 GetAdapters().FirstOrDefault(a => a.Luid == AdapterLuid).Name ?? string.Empty;
+            LogCreated(Api, AdapterName, AdapterLuid);
         }
         catch
         {
@@ -88,6 +95,9 @@ public sealed unsafe class SpoutDevice : IDisposable
     /// <summary>The GPU's name, as DXGI reports it.</summary>
     public string AdapterName { get; }
 
+    // Where the device's senders and receivers log.
+    internal ILoggerFactory LoggerFactory { get; }
+
     internal ID3D11Device* Device => _device.Pointer;
 
     internal ID3D11DeviceContext* Context => _context.Pointer;
@@ -98,9 +108,13 @@ public sealed unsafe class SpoutDevice : IDisposable
 
     /// <summary>Creates a hardware device on a GPU.</summary>
     /// <param name="adapterLuid">The GPU's LUID, or null for the system's default GPU.</param>
+    /// <param name="loggerFactory">Where the device, and its senders and receivers, log.</param>
     /// <returns>The device.</returns>
     /// <exception cref="ArgumentException">No GPU has that LUID.</exception>
-    public static SpoutDevice Create(long? adapterLuid = null) => new(CreateD3D11(adapterLuid));
+    public static SpoutDevice Create(
+        long? adapterLuid = null,
+        ILoggerFactory? loggerFactory = null
+    ) => new(CreateD3D11(adapterLuid), loggerFactory);
 
     /// <summary>
     /// Shares from and to the OpenGL context current on the calling thread, through
@@ -111,10 +125,14 @@ public sealed unsafe class SpoutDevice : IDisposable
     /// The GPU the context renders on, or null to find it: the interop opens only a Direct3D 11 device
     /// on the context's own GPU, so each is tried in turn.
     /// </param>
+    /// <param name="loggerFactory">Where the device, and its senders and receivers, log.</param>
     /// <returns>The device.</returns>
     /// <exception cref="InvalidOperationException">No OpenGL context is current.</exception>
     /// <exception cref="SpoutException">The context has no <c>WGL_NV_DX_interop2</c>.</exception>
-    public static SpoutDevice ForOpenGL(long? adapterLuid = null)
+    public static SpoutDevice ForOpenGL(
+        long? adapterLuid = null,
+        ILoggerFactory? loggerFactory = null
+    )
     {
         GL gl =
             GL.Load()
@@ -130,7 +148,7 @@ public sealed unsafe class SpoutDevice : IDisposable
             OpenGLBridge? bridge = OpenGLBridge.TryOpen(gl, device.Pointer);
             if (bridge is not null)
             {
-                return new(device, SpoutGraphicsApi.OpenGL, null, null, bridge);
+                return new(device, loggerFactory, SpoutGraphicsApi.OpenGL, null, null, bridge);
             }
 
             device.Dispose();
@@ -147,11 +165,15 @@ public sealed unsafe class SpoutDevice : IDisposable
     /// SDK finds a sender's adapter.
     /// </summary>
     /// <param name="sender">The sender, from <see cref="SpoutSenders"/>.</param>
+    /// <param name="loggerFactory">Where the device, and its senders and receivers, log.</param>
     /// <returns>The device.</returns>
     /// <exception cref="SpoutException">
     /// No GPU can open the sender's texture: it shares CPU memory, or it has stopped.
     /// </exception>
-    public static SpoutDevice CreateFor(SpoutSenderInfo sender)
+    public static SpoutDevice CreateFor(
+        SpoutSenderInfo sender,
+        ILoggerFactory? loggerFactory = null
+    )
     {
         if (sender.ShareHandle == 0)
         {
@@ -160,7 +182,7 @@ public sealed unsafe class SpoutDevice : IDisposable
 
         foreach (SpoutAdapter adapter in GetAdapters())
         {
-            SpoutDevice device = Create(adapter.Luid);
+            SpoutDevice device = Create(adapter.Luid, loggerFactory);
             using ComPtr<ID3D11Texture2D>? texture = SharedTextures.TryOpenShared(
                 device,
                 sender.ShareHandle,
@@ -218,8 +240,13 @@ public sealed unsafe class SpoutDevice : IDisposable
     /// The <c>ID3D12CommandQueue*</c> (a direct queue) the copies are submitted to, ordered with the
     /// application's own work on it. This instance holds a reference.
     /// </param>
+    /// <param name="loggerFactory">Where the device, and its senders and receivers, log.</param>
     /// <returns>The device.</returns>
-    public static SpoutDevice FromD3D12Device(nint device, nint commandQueue)
+    public static SpoutDevice FromD3D12Device(
+        nint device,
+        nint commandQueue,
+        ILoggerFactory? loggerFactory = null
+    )
     {
         if (device == 0)
         {
@@ -259,6 +286,7 @@ public sealed unsafe class SpoutDevice : IDisposable
         LUID luid = ((ID3D12Device*)device)->GetAdapterLuid();
         return new(
             owned,
+            loggerFactory,
             SpoutGraphicsApi.Direct3D12,
             new D3D12Bridge(bridge),
             ((long)luid.HighPart << 32) | luid.LowPart
@@ -270,11 +298,12 @@ public sealed unsafe class SpoutDevice : IDisposable
     /// receives are opened, without leaving its GPU.
     /// </summary>
     /// <param name="device">The <c>ID3D11Device*</c>. This instance holds its own reference.</param>
+    /// <param name="loggerFactory">Where the device, and its senders and receivers, log.</param>
     /// <returns>The device.</returns>
-    public static SpoutDevice FromD3D11Device(nint device) =>
+    public static SpoutDevice FromD3D11Device(nint device, ILoggerFactory? loggerFactory = null) =>
         device == 0
             ? throw new ArgumentNullException(nameof(device))
-            : new(ComPtr<ID3D11Device>.AddRef((ID3D11Device*)device));
+            : new(ComPtr<ID3D11Device>.AddRef((ID3D11Device*)device), loggerFactory);
 
     /// <inheritdoc/>
     public void Dispose()
@@ -357,4 +386,11 @@ public sealed unsafe class SpoutDevice : IDisposable
             candidate.Dispose();
         }
     }
+
+    [LoggerMessage(
+        EventId = 1,
+        Level = LogLevel.Debug,
+        Message = "Spout device for {Api} on {AdapterName} (LUID {AdapterLuid:X16})"
+    )]
+    private partial void LogCreated(SpoutGraphicsApi api, string adapterName, long adapterLuid);
 }
