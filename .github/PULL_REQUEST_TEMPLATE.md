@@ -5,6 +5,6 @@
 ## Checklist
 
 - [ ] `dotnet build` is clean (warnings are errors)
-- [ ] `dotnet test --filter "TestCategory!=RequiresGpu"` passes
-- [ ] If protocol behaviour changed, it follows the Spout SDK source it mirrors and the interop tests against `tests/SpoutPeer` pass
+- [ ] `dotnet test --solution Spout2.NET.slnx` passes, including the interop tests against `tests/SpoutPeer`
+- [ ] If protocol behaviour changed, it follows the Spout SDK source in `external/Spout2`
 - [ ] Public API changes are documented
