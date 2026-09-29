@@ -54,10 +54,9 @@ public sealed class LoggingTests
     public void Receiver_LogsASenderItCannotOpenOnce()
     {
         SpoutAdapter[] gpus = [.. SpoutDevice.GetAdapters().Where(static a => !a.IsSoftware)];
-        SpoutAdapter software = SpoutDevice.GetAdapters().FirstOrDefault(static a => a.IsSoftware);
-        if (gpus.Length == 0 || software.Luid == 0)
+        if (gpus.Length < 2)
         {
-            Assert.Inconclusive("Needs a GPU and the software adapter.");
+            Assert.Inconclusive("This machine has one GPU.");
         }
 
         using SpoutDevice sending = SpoutDevice.Create(gpus[0].Luid);
@@ -69,7 +68,7 @@ public sealed class LoggingTests
         }
 
         CapturingLoggerFactory logs = new();
-        using SpoutDevice receiving = SpoutDevice.Create(software.Luid, logs);
+        using SpoutDevice receiving = SpoutDevice.Create(gpus[1].Luid, logs);
         using SpoutReceiver receiver = new(receiving, new() { SenderName = name });
         for (int i = 0; i < 3; i++)
         {
