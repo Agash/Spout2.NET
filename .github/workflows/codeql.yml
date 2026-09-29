@@ -45,9 +45,6 @@ jobs:
 
       # Manual build mode: the autobuilder does not know about the pinned preview SDK or the
       # solution layout, and a build it cannot complete yields no analysis at all.
-      - name: Build native shim (MSVC x64)
-        run: native/build-native.ps1
-
       - name: Build solution
         run: dotnet build Spout2.NET.slnx --configuration Release
 
