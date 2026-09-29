@@ -14,8 +14,8 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <EnablePackageValidation>true</EnablePackageValidation>
     <PackageId>Spout2.NET</PackageId>
-    <Description>Spout for .NET: share video frames between Windows applications in real time as Direct3D 11 shared textures, compatible with OBS, Resolume, TouchDesigner and every other Spout 2 application. A managed implementation of the Spout protocol with no native dependencies. Native AOT compatible.</Description>
-    <PackageTags>spout;spout2;windows;directx;d3d11;texture;sharing;obs;video;capture;interop;gpu;nativeaot</PackageTags>
+    <Description>Spout for .NET: share video frames between Windows applications in real time as GPU textures from Direct3D 11, Direct3D 12 and OpenGL, compatible with OBS, Resolume, TouchDesigner and every other Spout 2 application. A managed implementation of the Spout protocol with no native dependencies. Native AOT compatible.</Description>
+    <PackageTags>spout;spout2;windows;directx;d3d11;d3d12;opengl;texture;sharing;obs;video;capture;interop;gpu;nativeaot</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
   <ItemGroup>

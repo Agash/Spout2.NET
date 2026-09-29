@@ -56,6 +56,10 @@ using SpoutDevice device = SpoutDevice.ForOpenGL();
 `ID3D11Texture2D*`), `D3D12Texture` (an `ID3D12Resource*` and the state it is in) and `OpenGLTexture`
 (a texture name). An OpenGL device is used on the thread its context is current on.
 
+Every factory also takes an `ILoggerFactory`. The device's senders and receivers log through it: a
+sender publishing, resizing and leaving, a receiver connecting to and losing senders, and every fault
+(a lock taken from a crashed process, a sender on another GPU, a dropped frame).
+
 ## Send
 
 ```csharp
@@ -109,7 +113,7 @@ if (receiver.TryReceive(out SpoutFrame frame) == SpoutReceiveResult.Received)
 {
     using (frame)
     {
-        using SpoutFrameLease kept = frame.Retain(); // a copy that outlives the borrow
+        using SpoutFrameLease kept = frame.Retain(); // a copy that outlives the borrow, with the same CopyTo
     }
 }
 ```
