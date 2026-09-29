@@ -9,8 +9,8 @@ internal struct SharedTextureInfo
 {
     public const int Size = 280;
 
-    // The Direct3D legacy shared handle of the texture. Handles of this kind fit 32 bits by design,
-    // which is why Spout can store one here on 64-bit Windows.
+    // The DXGI shared handle of the texture (IDXGIResource::GetSharedHandle): a machine-wide value that
+    // fits 32 bits, so any process opens the texture from this number alone.
     public uint ShareHandle;
     public uint Width;
     public uint Height;

@@ -39,7 +39,7 @@ public enum SpoutFormat : uint
 
 internal static class SpoutFormats
 {
-    // Spout 2.005 and earlier senders recorded Direct3D 9 formats; the SDK reads them as BGRA.
+    // Direct3D 9 senders (the SDK's SpoutDX9) record D3D9 formats; the SDK reads them as BGRA.
     private const uint D3DFormatA8R8G8B8 = 21;
     private const uint D3DFormatX8R8G8B8 = 22;
 

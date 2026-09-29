@@ -69,7 +69,7 @@ public sealed unsafe class ProtocolTests
     }
 
     [TestMethod]
-    public void LegacyFormats_ReadAsBgra()
+    public void D3D9Formats_ReadAsBgra()
     {
         Assert.AreEqual(SpoutFormat.Bgra8Unorm, SpoutFormats.FromRegistry(0));
         Assert.AreEqual(SpoutFormat.Bgra8Unorm, SpoutFormats.FromRegistry(21));
