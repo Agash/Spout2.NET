@@ -149,3 +149,8 @@ indent_size = 2
 end_of_line = lf
 [*.{cmd,bat}]
 end_of_line = crlf
+
+# Library code never resumes on its caller's context: an app that blocks its UI thread on a
+# library task would deadlock.
+[src/**.cs]
+dotnet_diagnostic.CA2007.severity = warning
