@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Spout2.NET.Direct3D;
@@ -17,6 +16,9 @@ public sealed record SpoutSenderOptions
     /// sender. The event wakes one waiting receiver per frame, so it suits one receiver.
     /// </summary>
     public bool SignalFrameSync { get; init; }
+
+    /// <summary>The clock <see cref="SpoutSender.FramesPerSecond"/> is measured on.</summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 }
 
 /// <summary>
@@ -379,10 +381,11 @@ public sealed unsafe partial class SpoutSender : IDisposable
     {
         _ = _counter!.Increment();
         FrameNumber++;
-        long now = Stopwatch.GetTimestamp();
+        TimeProvider time = _options.TimeProvider;
+        long now = time.GetTimestamp();
         if (_lastPublish != 0)
         {
-            double interval = Stopwatch.GetElapsedTime(_lastPublish, now).TotalSeconds;
+            double interval = time.GetElapsedTime(_lastPublish, now).TotalSeconds;
             if (interval > 0)
             {
                 // The SDK smooths the rate the same way: 5% of each new measurement.
