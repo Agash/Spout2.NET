@@ -11,6 +11,6 @@
 
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />
     <!-- Source generator for the DXGI and D3D11 COM interop, in its AOT-safe form (NativeMethods.json). -->
-    <PackageVersion Include="Microsoft.Windows.CsWin32" Version="0.3.335" />
+    <PackageVersion Include="Microsoft.Windows.CsWin32" Version="0.3.347" />
   </ItemGroup>
 </Project>
