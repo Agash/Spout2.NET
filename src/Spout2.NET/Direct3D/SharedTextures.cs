@@ -11,13 +11,15 @@ internal static unsafe class SharedTextures
     // A sender's texture, shared by a DXGI shared handle (D3D11_RESOURCE_MISC_SHARED), bindable as a
     // render target and a shader resource, one mip, one slice. This is
     // spoutDirectX::CreateSharedDX11Texture with its defaults, which is what every SDK sender creates
-    // and every receiver can open.
+    // and every receiver can open. A shader-writable texture is also bindable for unordered access, so
+    // compute work renders into it; receivers open it the same way.
     public static ComPtr<ID3D11Texture2D> CreateShared(
         SpoutDevice device,
         int width,
         int height,
         SpoutFormat format,
-        out uint shareHandle
+        out uint shareHandle,
+        bool shaderWritable = false
     )
     {
         D3D11_TEXTURE2D_DESC description = new()
@@ -31,7 +33,8 @@ internal static unsafe class SharedTextures
             Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
             BindFlags =
                 D3D11_BIND_FLAG.D3D11_BIND_RENDER_TARGET
-                | D3D11_BIND_FLAG.D3D11_BIND_SHADER_RESOURCE,
+                | D3D11_BIND_FLAG.D3D11_BIND_SHADER_RESOURCE
+                | (shaderWritable ? D3D11_BIND_FLAG.D3D11_BIND_UNORDERED_ACCESS : 0),
             MiscFlags = D3D11_RESOURCE_MISC_FLAG.D3D11_RESOURCE_MISC_SHARED,
         };
         ID3D11Texture2D* texture;

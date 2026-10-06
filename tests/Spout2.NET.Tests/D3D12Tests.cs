@@ -160,6 +160,37 @@ public sealed class D3D12Tests
         }
     }
 
+    // A shader-writable sender's shared texture takes unordered-access views on Direct3D 12, for compute
+    // work that renders straight into it; a default one is what every SDK sender creates.
+    [TestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public unsafe void ShaderWritable_SharesATextureComputeCanWrite(bool shaderWritable)
+    {
+        using D3D12Context d3d12 = D3D12Context.Create();
+        using SpoutDevice device = d3d12.SpoutDevice();
+        using SpoutSender sender = new(
+            Gpu.UniqueName("d3d12 writable"),
+            device,
+            new SpoutSenderOptions { ShaderWritable = shaderWritable }
+        );
+        Assert.IsTrue(
+            sender.TryBeginFrame(Width, Height, SpoutFormat.Bgra8Unorm, out SpoutSenderFrame frame)
+        );
+        using (frame)
+        {
+            D3D12_RESOURCE_DESC description = (
+                (ID3D12Resource*)frame.D3D12Texture.Resource
+            )->GetDesc();
+            Assert.AreEqual(
+                shaderWritable,
+                description.Flags.HasFlag(
+                    D3D12_RESOURCE_FLAGS.D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
+                )
+            );
+        }
+    }
+
     [TestMethod]
     public void D3D12Device_RefusesTheOtherApisTextures()
     {

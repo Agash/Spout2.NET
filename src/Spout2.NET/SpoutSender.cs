@@ -19,6 +19,14 @@ public sealed record SpoutSenderOptions
 
     /// <summary>The clock <see cref="SpoutSender.FramesPerSecond"/> is measured on.</summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    /// <summary>
+    /// Create the shared texture writable by shaders (unordered access) as well, for an application that
+    /// renders frames into it with compute work through <see cref="SpoutSender.TryBeginFrame"/>.
+    /// Receivers open it as any other. The format must support typed unordered-access stores on the
+    /// device, which 8-bit RGBA and BGRA do on current GPUs.
+    /// </summary>
+    public bool ShaderWritable { get; init; }
 }
 
 /// <summary>
@@ -413,7 +421,8 @@ public sealed unsafe partial class SpoutSender : IDisposable
             width,
             height,
             format,
-            out uint shareHandle
+            out uint shareHandle,
+            _options.ShaderWritable
         );
         bool first = _texture is null;
         ComPtr<ID3D12Resource>? sharedD3D12 = null;
