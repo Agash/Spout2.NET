@@ -81,6 +81,11 @@ if (sender.TryBeginFrame(1920, 1080, SpoutFormat.Bgra8Unorm, out SpoutSenderFram
 }
 ```
 
+An application that renders frames with compute shaders creates the shared texture writable by shaders
+(unordered access) with `new SpoutSenderOptions { ShaderWritable = true }`; receivers open it as any
+other. The format must support typed unordered-access stores on the device, which 8-bit RGBA and BGRA do
+on current GPUs. `FramesPerSecond` is measured on the options' `TimeProvider`.
+
 OpenGL's first row is the bottom of the image and Direct3D's is the top, so OpenGL textures are flipped
 on their way in and out, as the Spout SDK does by default. Pass `flip: false` for a texture that is
 already top-down.
