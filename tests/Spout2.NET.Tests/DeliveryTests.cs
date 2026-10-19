@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Spout2.NET.Direct3D;
 using Spout2.NET.Protocol;
@@ -254,25 +253,42 @@ public sealed class DeliveryTests
     }
 
     [TestMethod]
-    public async Task Measures_ThePublishingRate()
+    public void Measures_ThePublishingRate()
     {
+        // On a clock the test moves: twelve frames 20 ms apart are 50 per second, and one 10 ms later
+        // moves the rate 5% of the way to 100, as the Spout SDK smooths it.
+        SteppedClock clock = new();
         using SpoutDevice device = Gpu.Device();
-        using SpoutSender sender = new(Gpu.UniqueName("rate"), device);
+        using SpoutSender sender = new(
+            Gpu.UniqueName("rate"),
+            device,
+            new SpoutSenderOptions { TimeProvider = clock }
+        );
         using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
-        Stopwatch clock = Stopwatch.StartNew();
         for (int i = 0; i < 12; i++)
         {
             Assert.IsTrue(sender.Send(texture.D3D11()));
-            await Task.Delay(10, TestContext.CancellationToken);
+            clock.Advance(TimeSpan.FromMilliseconds(20));
         }
 
         Assert.AreEqual(12, sender.FrameNumber);
-        Assert.IsInRange(
-            20.0,
-            120.0,
-            sender.FramesPerSecond,
-            $"measured over {clock.ElapsedMilliseconds} ms"
-        );
+        Assert.AreEqual(50.0, sender.FramesPerSecond, 1e-9);
+
+        clock.Advance(TimeSpan.FromMilliseconds(-10));
+        Assert.IsTrue(sender.Send(texture.D3D11()));
+        Assert.AreEqual((0.95 * 50.0) + (0.05 * 100.0), sender.FramesPerSecond, 1e-9);
+    }
+
+    // A clock that moves only when told to.
+    private sealed class SteppedClock : TimeProvider
+    {
+        private long _ticks = 1;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => _ticks;
+
+        public void Advance(TimeSpan by) => _ticks += by.Ticks;
     }
 
     // A Spout application that dies holding the access mutex leaves it abandoned; the next waiter
