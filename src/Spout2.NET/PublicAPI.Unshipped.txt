@@ -1,27 +1,5 @@
 #nullable enable
-~override Spout2.NET.D3D11Texture.Equals(object obj) -> bool
-~override Spout2.NET.D3D11Texture.ToString() -> string
-~override Spout2.NET.D3D12Texture.Equals(object obj) -> bool
-~override Spout2.NET.D3D12Texture.ToString() -> string
-~override Spout2.NET.OpenGLTexture.Equals(object obj) -> bool
-~override Spout2.NET.OpenGLTexture.ToString() -> string
-~override Spout2.NET.SpoutAdapter.Equals(object obj) -> bool
-~override Spout2.NET.SpoutAdapter.ToString() -> string
-~override Spout2.NET.SpoutSenderInfo.Equals(object obj) -> bool
-~override Spout2.NET.SpoutSenderInfo.ToString() -> string
-const Spout2.NET.OpenGLTexture.Texture2D = 3553 -> uint
-const Spout2.NET.OpenGLTexture.TextureRectangle = 34037 -> uint
-override Spout2.NET.D3D11Texture.GetHashCode() -> int
-override Spout2.NET.D3D12Texture.GetHashCode() -> int
-override Spout2.NET.OpenGLTexture.GetHashCode() -> int
-override Spout2.NET.SpoutAdapter.GetHashCode() -> int
-override Spout2.NET.SpoutReceiverOptions.Equals(object? obj) -> bool
-override Spout2.NET.SpoutReceiverOptions.GetHashCode() -> int
-override Spout2.NET.SpoutReceiverOptions.ToString() -> string!
-override Spout2.NET.SpoutSenderInfo.GetHashCode() -> int
-override Spout2.NET.SpoutSenderOptions.Equals(object? obj) -> bool
-override Spout2.NET.SpoutSenderOptions.GetHashCode() -> int
-override Spout2.NET.SpoutSenderOptions.ToString() -> string!
+Microsoft.Extensions.DependencyInjection.SpoutServiceCollectionExtensions
 Spout2.NET.D3D11Texture
 Spout2.NET.D3D11Texture.D3D11Texture() -> void
 Spout2.NET.D3D11Texture.D3D11Texture(nint NativePointer) -> void
@@ -74,8 +52,15 @@ Spout2.NET.SpoutDevice.Dispose() -> void
 Spout2.NET.SpoutDevice.NativePointer.get -> nint
 Spout2.NET.SpoutException
 Spout2.NET.SpoutException.SpoutException() -> void
-Spout2.NET.SpoutException.SpoutException(string! message, System.Exception! innerException) -> void
 Spout2.NET.SpoutException.SpoutException(string! message) -> void
+Spout2.NET.SpoutException.SpoutException(string! message, System.Exception! innerException) -> void
+Spout2.NET.SpoutFactory
+Spout2.NET.SpoutFactory.CreateReceiver(Spout2.NET.SpoutReceiverOptions? options = null) -> Spout2.NET.SpoutReceiver!
+Spout2.NET.SpoutFactory.CreateSender(string! name, Spout2.NET.SpoutSenderOptions? options = null) -> Spout2.NET.SpoutSender!
+Spout2.NET.SpoutFactory.Device.get -> Spout2.NET.SpoutDevice!
+Spout2.NET.SpoutFactory.SpoutFactory(Spout2.NET.SpoutDevice! device, System.TimeProvider? timeProvider = null) -> void
+Spout2.NET.SpoutFactory.TimeProvider.get -> System.TimeProvider!
+Spout2.NET.SpoutFactory.WatchSendersAsync(System.TimeSpan interval, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<System.Collections.Immutable.ImmutableArray<Spout2.NET.SpoutSenderInfo>>!
 Spout2.NET.SpoutFormat
 Spout2.NET.SpoutFormat.Bgra8Unorm = 87 -> Spout2.NET.SpoutFormat
 Spout2.NET.SpoutFormat.Bgra8UnormSrgb = 91 -> Spout2.NET.SpoutFormat
@@ -88,6 +73,7 @@ Spout2.NET.SpoutFormat.Rgba8Unorm = 28 -> Spout2.NET.SpoutFormat
 Spout2.NET.SpoutFormat.Rgba8UnormSrgb = 29 -> Spout2.NET.SpoutFormat
 Spout2.NET.SpoutFormat.Unknown = 0 -> Spout2.NET.SpoutFormat
 Spout2.NET.SpoutFrame
+Spout2.NET.SpoutFrame.CopyPixelsTo(System.Span<byte> destination, int stride = 0) -> int
 Spout2.NET.SpoutFrame.CopyTo(Spout2.NET.D3D11Texture destination) -> void
 Spout2.NET.SpoutFrame.CopyTo(Spout2.NET.D3D12Texture destination) -> void
 Spout2.NET.SpoutFrame.CopyTo(Spout2.NET.OpenGLTexture destination, bool flip = true) -> void
@@ -107,6 +93,7 @@ Spout2.NET.SpoutFrame.Texture.get -> Spout2.NET.D3D11Texture
 Spout2.NET.SpoutFrame.Width.get -> int
 Spout2.NET.SpoutFrameHandler
 Spout2.NET.SpoutFrameLease
+Spout2.NET.SpoutFrameLease.CopyPixelsTo(System.Span<byte> destination, int stride = 0) -> int
 Spout2.NET.SpoutFrameLease.CopyTo(Spout2.NET.D3D11Texture destination) -> void
 Spout2.NET.SpoutFrameLease.CopyTo(Spout2.NET.D3D12Texture destination) -> void
 Spout2.NET.SpoutFrameLease.CopyTo(Spout2.NET.OpenGLTexture destination, bool flip = true) -> void
@@ -122,6 +109,12 @@ Spout2.NET.SpoutGraphicsApi
 Spout2.NET.SpoutGraphicsApi.Direct3D11 = 0 -> Spout2.NET.SpoutGraphicsApi
 Spout2.NET.SpoutGraphicsApi.Direct3D12 = 1 -> Spout2.NET.SpoutGraphicsApi
 Spout2.NET.SpoutGraphicsApi.OpenGL = 2 -> Spout2.NET.SpoutGraphicsApi
+Spout2.NET.SpoutReceiveResult
+Spout2.NET.SpoutReceiveResult.Busy = 2 -> Spout2.NET.SpoutReceiveResult
+Spout2.NET.SpoutReceiveResult.CpuSender = 4 -> Spout2.NET.SpoutReceiveResult
+Spout2.NET.SpoutReceiveResult.NoSender = 1 -> Spout2.NET.SpoutReceiveResult
+Spout2.NET.SpoutReceiveResult.OtherAdapter = 3 -> Spout2.NET.SpoutReceiveResult
+Spout2.NET.SpoutReceiveResult.Received = 0 -> Spout2.NET.SpoutReceiveResult
 Spout2.NET.SpoutReceiver
 Spout2.NET.SpoutReceiver.Device.get -> Spout2.NET.SpoutDevice!
 Spout2.NET.SpoutReceiver.Dispose() -> void
@@ -132,12 +125,6 @@ Spout2.NET.SpoutReceiver.RunAsync(Spout2.NET.SpoutFrameHandler! handler, System.
 Spout2.NET.SpoutReceiver.Sender.get -> Spout2.NET.SpoutSenderInfo?
 Spout2.NET.SpoutReceiver.SpoutReceiver(Spout2.NET.SpoutDevice! device, Spout2.NET.SpoutReceiverOptions? options = null) -> void
 Spout2.NET.SpoutReceiver.TryReceive(out Spout2.NET.SpoutFrame frame) -> Spout2.NET.SpoutReceiveResult
-Spout2.NET.SpoutReceiveResult
-Spout2.NET.SpoutReceiveResult.Busy = 2 -> Spout2.NET.SpoutReceiveResult
-Spout2.NET.SpoutReceiveResult.CpuSender = 4 -> Spout2.NET.SpoutReceiveResult
-Spout2.NET.SpoutReceiveResult.NoSender = 1 -> Spout2.NET.SpoutReceiveResult
-Spout2.NET.SpoutReceiveResult.OtherAdapter = 3 -> Spout2.NET.SpoutReceiveResult
-Spout2.NET.SpoutReceiveResult.Received = 0 -> Spout2.NET.SpoutReceiveResult
 Spout2.NET.SpoutReceiverOptions
 Spout2.NET.SpoutReceiverOptions.<Clone>$() -> Spout2.NET.SpoutReceiverOptions!
 Spout2.NET.SpoutReceiverOptions.Equals(Spout2.NET.SpoutReceiverOptions? other) -> bool
@@ -148,6 +135,8 @@ Spout2.NET.SpoutReceiverOptions.ReconnectInterval.init -> void
 Spout2.NET.SpoutReceiverOptions.SenderName.get -> string?
 Spout2.NET.SpoutReceiverOptions.SenderName.init -> void
 Spout2.NET.SpoutReceiverOptions.SpoutReceiverOptions() -> void
+Spout2.NET.SpoutReceiverOptions.TimeProvider.get -> System.TimeProvider!
+Spout2.NET.SpoutReceiverOptions.TimeProvider.init -> void
 Spout2.NET.SpoutReceiverOptions.UncountedFrameInterval.get -> System.TimeSpan
 Spout2.NET.SpoutReceiverOptions.UncountedFrameInterval.init -> void
 Spout2.NET.SpoutReceiverOptions.WaitForFrameSync.get -> bool
@@ -164,6 +153,7 @@ Spout2.NET.SpoutSender.Name.get -> string!
 Spout2.NET.SpoutSender.Send(Spout2.NET.D3D11Texture texture) -> bool
 Spout2.NET.SpoutSender.Send(Spout2.NET.D3D12Texture texture) -> bool
 Spout2.NET.SpoutSender.Send(Spout2.NET.OpenGLTexture texture, bool flip = true) -> bool
+Spout2.NET.SpoutSender.SendPixels(System.ReadOnlySpan<byte> pixels, int width, int height, Spout2.NET.SpoutFormat format, int stride = 0) -> bool
 Spout2.NET.SpoutSender.SharedTexture.get -> Spout2.NET.D3D11Texture
 Spout2.NET.SpoutSender.SpoutSender(string! name, Spout2.NET.SpoutDevice! device, Spout2.NET.SpoutSenderOptions? options = null) -> void
 Spout2.NET.SpoutSender.TryBeginFrame(int width, int height, Spout2.NET.SpoutFormat format, out Spout2.NET.SpoutSenderFrame frame) -> bool
@@ -211,6 +201,20 @@ Spout2.NET.SpoutSenderOptions.SpoutSenderOptions() -> void
 Spout2.NET.SpoutSenderOptions.TimeProvider.get -> System.TimeProvider!
 Spout2.NET.SpoutSenderOptions.TimeProvider.init -> void
 Spout2.NET.SpoutSenders
+const Spout2.NET.OpenGLTexture.Texture2D = 3553 -> uint
+const Spout2.NET.OpenGLTexture.TextureRectangle = 34037 -> uint
+override Spout2.NET.D3D11Texture.GetHashCode() -> int
+override Spout2.NET.D3D12Texture.GetHashCode() -> int
+override Spout2.NET.OpenGLTexture.GetHashCode() -> int
+override Spout2.NET.SpoutAdapter.GetHashCode() -> int
+override Spout2.NET.SpoutReceiverOptions.Equals(object? obj) -> bool
+override Spout2.NET.SpoutReceiverOptions.GetHashCode() -> int
+override Spout2.NET.SpoutReceiverOptions.ToString() -> string!
+override Spout2.NET.SpoutSenderInfo.GetHashCode() -> int
+override Spout2.NET.SpoutSenderOptions.Equals(object? obj) -> bool
+override Spout2.NET.SpoutSenderOptions.GetHashCode() -> int
+override Spout2.NET.SpoutSenderOptions.ToString() -> string!
+static Microsoft.Extensions.DependencyInjection.SpoutServiceCollectionExtensions.AddSpout(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, long? adapterLuid = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
 static Spout2.NET.D3D11Texture.operator !=(Spout2.NET.D3D11Texture left, Spout2.NET.D3D11Texture right) -> bool
 static Spout2.NET.D3D11Texture.operator ==(Spout2.NET.D3D11Texture left, Spout2.NET.D3D11Texture right) -> bool
 static Spout2.NET.D3D12Texture.operator !=(Spout2.NET.D3D12Texture left, Spout2.NET.D3D12Texture right) -> bool
@@ -235,5 +239,15 @@ static Spout2.NET.SpoutSenders.Active.get -> string?
 static Spout2.NET.SpoutSenders.GetAll() -> System.Collections.Immutable.ImmutableArray<Spout2.NET.SpoutSenderInfo>
 static Spout2.NET.SpoutSenders.TryGet(string! name, out Spout2.NET.SpoutSenderInfo sender) -> bool
 static Spout2.NET.SpoutSenders.TrySetActive(string! name) -> bool
-static Spout2.NET.SpoutSenders.WatchAsync(System.TimeSpan interval, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<System.Collections.Immutable.ImmutableArray<Spout2.NET.SpoutSenderInfo>>!
+static Spout2.NET.SpoutSenders.WatchAsync(System.TimeSpan interval, System.TimeProvider? timeProvider = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<System.Collections.Immutable.ImmutableArray<Spout2.NET.SpoutSenderInfo>>!
 virtual Spout2.NET.SpoutFrameHandler.Invoke(in Spout2.NET.SpoutFrame frame) -> void
+~override Spout2.NET.D3D11Texture.Equals(object obj) -> bool
+~override Spout2.NET.D3D11Texture.ToString() -> string
+~override Spout2.NET.D3D12Texture.Equals(object obj) -> bool
+~override Spout2.NET.D3D12Texture.ToString() -> string
+~override Spout2.NET.OpenGLTexture.Equals(object obj) -> bool
+~override Spout2.NET.OpenGLTexture.ToString() -> string
+~override Spout2.NET.SpoutAdapter.Equals(object obj) -> bool
+~override Spout2.NET.SpoutAdapter.ToString() -> string
+~override Spout2.NET.SpoutSenderInfo.Equals(object obj) -> bool
+~override Spout2.NET.SpoutSenderInfo.ToString() -> string

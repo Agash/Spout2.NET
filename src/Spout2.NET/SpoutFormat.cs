@@ -43,6 +43,24 @@ internal static class SpoutFormats
     private const uint D3DFormatA8R8G8B8 = 21;
     private const uint D3DFormatX8R8G8B8 = 22;
 
+    // The formats a frame can move through CPU memory in: every one Spout2.NET names.
+    public static int BytesPerPixel(SpoutFormat format) =>
+        format switch
+        {
+            SpoutFormat.Rgba32Float => 16,
+            SpoutFormat.Rgba16Float or SpoutFormat.Rgba16Unorm => 8,
+            SpoutFormat.Rgb10A2Unorm
+            or SpoutFormat.Rgba8Unorm
+            or SpoutFormat.Rgba8UnormSrgb
+            or SpoutFormat.Bgra8Unorm
+            or SpoutFormat.Bgrx8Unorm
+            or SpoutFormat.Bgra8UnormSrgb => 4,
+            _ => throw new ArgumentException(
+                $"Frames in {format} do not move through CPU memory.",
+                nameof(format)
+            ),
+        };
+
     public static SpoutFormat FromRegistry(uint format) =>
         format is 0 or D3DFormatA8R8G8B8 or D3DFormatX8R8G8B8
             ? SpoutFormat.Bgra8Unorm

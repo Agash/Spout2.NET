@@ -225,6 +225,62 @@ public sealed unsafe partial class SpoutSender : IDisposable
     }
 
     /// <summary>
+    /// Publishes a frame from CPU memory: the rows are uploaded into the shared texture, which follows
+    /// the frame's size and format. For frames that start on the CPU (screenshots, decoded images, test
+    /// patterns); a frame already on the GPU goes faster through the texture overloads.
+    /// </summary>
+    /// <param name="pixels">The frame's rows, top first, in <paramref name="format"/>.</param>
+    /// <param name="width">The frame's width.</param>
+    /// <param name="height">The frame's height.</param>
+    /// <param name="format">The pixel format of <paramref name="pixels"/>.</param>
+    /// <param name="stride">The bytes from one row to the next; 0 for rows packed without padding.</param>
+    /// <returns>
+    /// Whether the frame was published; false when a receiver held the shared texture for Spout's whole
+    /// timeout (67 ms), and the frame was dropped.
+    /// </returns>
+    public bool SendPixels(
+        ReadOnlySpan<byte> pixels,
+        int width,
+        int height,
+        SpoutFormat format,
+        int stride = 0
+    )
+    {
+        ThrowIfUnusable();
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        int length = PixelTransfer.Length(width, height, format, ref stride);
+        if (pixels.Length < length)
+        {
+            throw new ArgumentException(
+                $"A {width}x{height} {format} frame at a stride of {stride} needs {length} bytes; got {pixels.Length}.",
+                nameof(pixels)
+            );
+        }
+
+        EnsureTexture(width, height, format);
+        if (!TryEnterAccess())
+        {
+            return false;
+        }
+
+        try
+        {
+            PixelTransfer.Upload(Device, _texture!.Pointer, pixels, stride);
+
+            // Uploaded through Direct3D 11 whatever the application's API, so waited for there.
+            Device.WaitForGpu();
+            Published();
+        }
+        finally
+        {
+            _access!.Exit();
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Takes the shared texture for the application to render the next frame into directly, with no
     /// copy. The frame is published by <see cref="SpoutSenderFrame.Publish"/>; disposing it unpublished
     /// discards it. Receivers wait while the frame is open, so keep it short.

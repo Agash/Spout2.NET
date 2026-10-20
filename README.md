@@ -60,6 +60,19 @@ Every factory also takes an `ILoggerFactory`. The device's senders and receivers
 sender publishing, resizing and leaving, a receiver connecting to and losing senders, and every fault
 (a lock taken from a crashed process, a sender on another GPU, a dropped frame).
 
+With dependency injection, `AddSpout` registers a device on the default GPU (or the one whose LUID it is
+given), made with the container's `ILoggerFactory`, and a `SpoutFactory` that makes senders and receivers
+on it with the container's `TimeProvider`. An application with a Direct3D device of its own registers
+its `SpoutDevice` first:
+
+```csharp
+services.AddSpout();
+
+SpoutFactory spout = provider.GetRequiredService<SpoutFactory>();
+using SpoutSender sender = spout.CreateSender("My Output");
+using SpoutReceiver receiver = spout.CreateReceiver();
+```
+
 ## Send
 
 ```csharp
@@ -69,6 +82,9 @@ using SpoutSender sender = new("My Output", device);
 sender.Send(new D3D11Texture(texture));                                          // Direct3D 11
 sender.Send(new D3D12Texture(resource, D3D12ResourceState.PixelShaderResource)); // Direct3D 12
 sender.Send(new OpenGLTexture(textureName));                                     // OpenGL
+
+// Or upload a frame from CPU memory (rows top first; stride 0 for packed rows):
+sender.SendPixels(pixels, 1920, 1080, SpoutFormat.Bgra8Unorm);
 
 // Or render into the shared texture directly, with no copy:
 if (sender.TryBeginFrame(1920, 1080, SpoutFormat.Bgra8Unorm, out SpoutSenderFrame frame))
@@ -123,6 +139,10 @@ if (receiver.TryReceive(out SpoutFrame frame) == SpoutReceiveResult.Received)
 }
 ```
 
+`CopyPixelsTo` reads a frame or a kept copy into CPU memory through a staging texture, for screenshots,
+computer vision and tests; it waits for the GPU, so frames bound for an encoder stay on the GPU with
+`CopyTo`. Frames are stamped (`ObservedAtNanoseconds`) on the options' `TimeProvider`.
+
 Spout's lock is a Win32 mutex owned by the receiving thread, so a borrowed frame is disposed on the
 thread that received it and never held across an `await`.
 
@@ -141,7 +161,7 @@ foreach (SpoutSenderInfo s in SpoutSenders.GetAll())
 string? active = SpoutSenders.Active;
 SpoutSenders.TrySetActive("My Output");
 
-await foreach (var senders in SpoutSenders.WatchAsync(TimeSpan.FromSeconds(1), cancellationToken))
+await foreach (var senders in SpoutSenders.WatchAsync(TimeSpan.FromSeconds(1), cancellationToken: cancellationToken))
     Show(senders); // each time a sender starts, stops or changes
 ```
 

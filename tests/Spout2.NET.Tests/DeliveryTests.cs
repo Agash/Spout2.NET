@@ -25,7 +25,7 @@ public sealed class DeliveryTests
             cancellationToken
         );
         await using IAsyncEnumerator<ImmutableArray<SpoutSenderInfo>> changes = SpoutSenders
-            .WatchAsync(TimeSpan.FromMilliseconds(10), stop.Token)
+            .WatchAsync(TimeSpan.FromMilliseconds(10), cancellationToken: stop.Token)
             .GetAsyncEnumerator(stop.Token);
 
         Assert.IsTrue(await changes.MoveNextAsync(), "The first result is the current set.");
@@ -45,7 +45,7 @@ public sealed class DeliveryTests
             await changes.MoveNextAsync()
         );
         _ = Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
-            SpoutSenders.WatchAsync(TimeSpan.Zero, cancellationToken)
+            SpoutSenders.WatchAsync(TimeSpan.Zero, cancellationToken: cancellationToken)
         );
     }
 

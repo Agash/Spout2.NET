@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
 using Spout2.NET.Direct3D;
@@ -67,6 +66,13 @@ public sealed record SpoutReceiverOptions
 
     /// <summary>In <see cref="SpoutReceiver.RunAsync"/>, how often to look for a sender while none is found.</summary>
     public TimeSpan ReconnectInterval { get; init; } = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// The clock frames are stamped on (<see cref="SpoutFrame.ObservedAtNanoseconds"/>). The waits of
+    /// <see cref="SpoutReceiver.RunAsync"/> stay on a high-resolution waitable timer, since a 1 ms poll
+    /// is finer than the thread pool's timers.
+    /// </summary>
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 }
 
 /// <summary>
@@ -264,7 +270,7 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
             count > 0 ? count : -1,
             isNew,
             changed,
-            MonotonicNanoseconds()
+            ObservedNow()
         );
         return SpoutReceiveResult.Received;
     }
@@ -578,8 +584,12 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
     )]
     private partial void LogRunFailed(Exception error, string sender);
 
-    private static long MonotonicNanoseconds() =>
-        (long)((Int128)Stopwatch.GetTimestamp() * 1_000_000_000 / Stopwatch.Frequency);
+    // The receiver's clock in nanoseconds, the unit frames carry.
+    private long ObservedNow()
+    {
+        TimeProvider time = _options.TimeProvider;
+        return (long)((Int128)time.GetTimestamp() * 1_000_000_000 / time.TimestampFrequency);
+    }
 
     // The receiver's hold on one sender: its texture opened on this device, its lock and its count.
     internal sealed class Connection : IDisposable

@@ -65,9 +65,10 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
     public bool SenderChanged { get; }
 
     /// <summary>
-    /// When the receiver took the frame, in nanoseconds of the monotonic clock
-    /// (<see cref="System.Diagnostics.Stopwatch"/>). Spout carries no capture time, so this is when the
-    /// frame was observed, not when it was produced.
+    /// When the receiver took the frame, in nanoseconds of its clock
+    /// (<see cref="SpoutReceiverOptions.TimeProvider"/>, the monotonic <see cref="System.Diagnostics.Stopwatch"/>
+    /// clock by default). Spout carries no capture time, so this is when the frame was observed, not when
+    /// it was produced.
     /// </summary>
     public long ObservedAtNanoseconds { get; }
 
@@ -169,6 +170,27 @@ public readonly unsafe ref struct SpoutFrame : IDisposable
     }
 
     /// <summary>
+    /// Reads the frame into CPU memory through a staging texture, waiting for the copy: for screenshots,
+    /// computer vision and tests. A frame bound for an encoder or a renderer stays on the GPU through the
+    /// texture overloads.
+    /// </summary>
+    /// <param name="destination">
+    /// Receives the frame's rows, top first, in <see cref="Format"/>: at least
+    /// <c>stride * (Height - 1)</c> plus one row of bytes.
+    /// </param>
+    /// <param name="stride">The bytes from one row to the next; 0 for rows packed without padding.</param>
+    /// <returns>The bytes written.</returns>
+    public int CopyPixelsTo(Span<byte> destination, int stride = 0) =>
+        _receiver!.Device.Pixels.Read(
+            Connection.Texture.Pointer,
+            Width,
+            Height,
+            Format,
+            destination,
+            stride
+        );
+
+    /// <summary>
     /// Keeps the frame past the borrow: copies it on the GPU into a texture the receiver owns and pools.
     /// </summary>
     /// <returns>The copy, returned to the pool when disposed.</returns>
@@ -242,7 +264,7 @@ public sealed unsafe class SpoutFrameLease : IDisposable
     /// <summary>The sender's frame count at the frame, or -1 when it does not count frames.</summary>
     public long FrameNumber { get; }
 
-    /// <summary>When the frame was observed, in nanoseconds of the monotonic clock.</summary>
+    /// <summary>When the frame was observed, in nanoseconds of the receiver's clock.</summary>
     public long ObservedAtNanoseconds { get; }
 
     private ComPtr<ID3D11Texture2D> Held
@@ -325,6 +347,16 @@ public sealed unsafe class SpoutFrameLease : IDisposable
             _openGL.Unlock();
         }
     }
+
+    /// <summary>Reads the frame into CPU memory through a staging texture, waiting for the copy.</summary>
+    /// <param name="destination">
+    /// Receives the frame's rows, top first, in <see cref="Format"/>: at least
+    /// <c>stride * (Height - 1)</c> plus one row of bytes.
+    /// </param>
+    /// <param name="stride">The bytes from one row to the next; 0 for rows packed without padding.</param>
+    /// <returns>The bytes written.</returns>
+    public int CopyPixelsTo(Span<byte> destination, int stride = 0) =>
+        _device.Pixels.Read(Held.Pointer, Width, Height, Format, destination, stride);
 
     /// <summary>Returns the copy to the receiver's pool.</summary>
     public void Dispose()

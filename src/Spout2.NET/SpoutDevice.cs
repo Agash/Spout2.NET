@@ -36,6 +36,7 @@ public sealed unsafe partial class SpoutDevice : IDisposable
     private readonly ComPtr<ID3D11DeviceContext> _context;
     private readonly Lock _idleGate = new();
     private ComPtr<ID3D11Query>? _idle;
+    private PixelTransfer? _pixels;
 
     private SpoutDevice(
         ComPtr<ID3D11Device> device,
@@ -105,6 +106,26 @@ public sealed unsafe partial class SpoutDevice : IDisposable
     internal D3D12Copier? D3D12 { get; }
 
     internal OpenGLBridge? OpenGL { get; }
+
+    // CPU readback, made on first use.
+    internal PixelTransfer Pixels
+    {
+        get
+        {
+            PixelTransfer? pixels = Volatile.Read(ref _pixels);
+            if (pixels is null)
+            {
+                PixelTransfer made = new(this);
+                pixels = Interlocked.CompareExchange(ref _pixels, made, null) ?? made;
+                if (pixels != made)
+                {
+                    made.Dispose();
+                }
+            }
+
+            return pixels;
+        }
+    }
 
     /// <summary>Creates a hardware device on a GPU.</summary>
     /// <param name="adapterLuid">The GPU's LUID, or null for the system's default GPU.</param>
@@ -289,6 +310,7 @@ public sealed unsafe partial class SpoutDevice : IDisposable
     public void Dispose()
     {
         OpenGL?.Dispose();
+        _pixels?.Dispose();
         _idle?.Dispose();
         D3D12?.Dispose();
         _context.Dispose();

@@ -98,24 +98,27 @@ public static class SpoutSenders
     /// the first result is the current set.
     /// </summary>
     /// <param name="interval">How often to read the registry.</param>
+    /// <param name="timeProvider">The clock the interval runs on; <see cref="TimeProvider.System"/> by default.</param>
     /// <param name="cancellationToken">Ends the sequence.</param>
     /// <returns>The senders, each time they change.</returns>
     public static IAsyncEnumerable<ImmutableArray<SpoutSenderInfo>> WatchAsync(
         TimeSpan interval,
+        TimeProvider? timeProvider = null,
         CancellationToken cancellationToken = default
     )
     {
         // Checked here, not in the iterator, which would only run at the first MoveNextAsync.
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
-        return Watch(interval, cancellationToken);
+        return Watch(interval, timeProvider ?? TimeProvider.System, cancellationToken);
     }
 
     private static async IAsyncEnumerable<ImmutableArray<SpoutSenderInfo>> Watch(
         TimeSpan interval,
+        TimeProvider timeProvider,
         [EnumeratorCancellation] CancellationToken cancellationToken
     )
     {
-        using PeriodicTimer timer = new(interval);
+        using PeriodicTimer timer = new(interval, timeProvider);
         ImmutableArray<SpoutSenderInfo> last = [];
         bool first = true;
         do
