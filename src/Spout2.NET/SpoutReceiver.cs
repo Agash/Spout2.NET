@@ -127,6 +127,14 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
     /// <summary>The sender received from last, or null when not connected.</summary>
     public SpoutSenderInfo? Sender => _connection?.Info;
 
+    /// <summary>
+    /// The sender's publishing rate, measured from its frame count as frames are received, as the Spout
+    /// SDK's <c>GetSenderFps</c> is: frames the sender published between two receives count too. Spout
+    /// states no rate, so this is the only one there is; 0 until two counted frames have been received,
+    /// or for a sender that does not count frames.
+    /// </summary>
+    public double SenderFramesPerSecond => _connection?.FramesPerSecond ?? 0;
+
     /// <summary>Whether the last receive found a sender.</summary>
     public bool IsConnected => _connection is not null;
 
@@ -261,6 +269,11 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
 
         long count = connection.Counter.Read();
         bool isNew = changed || count <= 0 || count != connection.LastFrame;
+        if (count > 0 && count != connection.LastFrame)
+        {
+            connection.Counted(count, _options.TimeProvider);
+        }
+
         connection.LastFrame = count;
         _frameOpen = true;
         _frameThread = Environment.CurrentManagedThreadId;
@@ -637,6 +650,34 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
         public MetadataBuffer? Metadata { get; set; }
 
         public long LastFrame { get; set; } = -1;
+
+        public double FramesPerSecond { get; private set; }
+
+        private long _countedAt;
+
+        // A count that moved forward since the last one, at the time it was seen. A count that stepped back
+        // (a sender restarted under the same name) starts the measurement over.
+        public void Counted(long count, TimeProvider time)
+        {
+            long now = time.GetTimestamp();
+            if (_countedAt != 0 && LastFrame > 0 && count > LastFrame)
+            {
+                double interval = time.GetElapsedTime(_countedAt, now).TotalSeconds;
+                if (interval > 0)
+                {
+                    // Smoothed as the sender's own rate is: 5% of each new measurement.
+                    double rate = (count - LastFrame) / interval;
+                    FramesPerSecond =
+                        FramesPerSecond == 0 ? rate : (0.95 * FramesPerSecond) + (0.05 * rate);
+                }
+            }
+            else if (count < LastFrame)
+            {
+                FramesPerSecond = 0;
+            }
+
+            _countedAt = now;
+        }
 
         public void Dispose()
         {

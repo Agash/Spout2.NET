@@ -294,6 +294,37 @@ public sealed class DeliveryTests
     // A Spout application that dies holding the access mutex leaves it abandoned; the next waiter
     // gets it, and the texture is whatever that application last wrote.
     [TestMethod]
+    public void Receiver_MeasuresTheSendersRate_FromItsFrameCount()
+    {
+        // The sender publishes every 20 ms and the receiver takes every second frame, 40 ms apart: the
+        // count moves by two each time, so the rate is 50 a second, as the Spout SDK's GetSenderFps has it.
+        SteppedClock clock = new();
+        using SpoutDevice device = Gpu.Device();
+        string name = Gpu.UniqueName("senderrate");
+        using SpoutSender sender = new(name, device);
+        using ComPtr<ID3D11Texture2D> texture = Gpu.Filled(device, 1, Width, Height);
+        using SpoutReceiver receiver = new(
+            device,
+            new() { SenderName = name, TimeProvider = clock }
+        );
+        for (int i = 0; i < 6; i++)
+        {
+            Assert.IsTrue(sender.Send(texture.D3D11()));
+            Assert.IsTrue(sender.Send(texture.D3D11()));
+            Assert.AreEqual(SpoutReceiveResult.Received, receiver.TryReceive(out SpoutFrame frame));
+            frame.Dispose();
+            if (i == 0)
+            {
+                Assert.AreEqual(0, receiver.SenderFramesPerSecond, "one count is no rate yet");
+            }
+
+            clock.Advance(TimeSpan.FromMilliseconds(40));
+        }
+
+        Assert.AreEqual(50.0, receiver.SenderFramesPerSecond, 1e-9);
+    }
+
+    [TestMethod]
     public void AnAbandonedAccessLock_IsTakenOver()
     {
         using SpoutDevice device = Gpu.Device();

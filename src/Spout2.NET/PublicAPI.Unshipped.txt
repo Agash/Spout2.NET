@@ -251,3 +251,4 @@ virtual Spout2.NET.SpoutFrameHandler.Invoke(in Spout2.NET.SpoutFrame frame) -> v
 ~override Spout2.NET.SpoutAdapter.ToString() -> string
 ~override Spout2.NET.SpoutSenderInfo.Equals(object obj) -> bool
 ~override Spout2.NET.SpoutSenderInfo.ToString() -> string
+Spout2.NET.SpoutReceiver.SenderFramesPerSecond.get -> double
