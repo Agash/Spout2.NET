@@ -112,6 +112,23 @@ internal static class SenderRegistry
         return name is not null && Exists(name) ? name : null;
     }
 
+    // The active sender's name for a receiver that reads its info next, which finds a sender that
+    // has gone: current, the sender it is connected to, is handed back while it stays active, so the
+    // name is not decoded for every frame.
+    public static string? GetActive(string? current)
+    {
+        using SharedMemory.Lock held = s_active.Value.Acquire();
+        if (!held.IsHeld)
+        {
+            return null;
+        }
+
+        ReadOnlySpan<byte> slot = held.Bytes[..SpoutName.MaxLength];
+        return current is not null && SpoutName.Holds(slot, current)
+            ? current
+            : SpoutName.Decode(slot);
+    }
+
     public static bool TrySetActive(string name)
     {
         if (!GetNames().Contains(name, StringComparer.Ordinal))
@@ -126,27 +143,13 @@ internal static class SenderRegistry
     public static bool TryReadInfo(string name, out SharedTextureInfo info)
     {
         info = default;
-        using SharedMemory? map = SharedMemory.TryOpen(name);
-        if (map is null)
-        {
-            return false;
-        }
-
-        using SharedMemory.Lock held = map.Acquire();
-        if (!held.IsHeld)
-        {
-            return false;
-        }
-
-        info = MemoryMarshal.Read<SharedTextureInfo>(held.Bytes);
-        return true;
+        return SharedMemory.TryRead(
+            name,
+            MemoryMarshal.AsBytes(new Span<SharedTextureInfo>(ref info))
+        );
     }
 
-    private static bool Exists(string name)
-    {
-        using SharedMemory? map = SharedMemory.TryOpen(name);
-        return map is not null;
-    }
+    private static bool Exists(string name) => SharedMemory.Exists(name);
 
     private static string? GetActiveName()
     {

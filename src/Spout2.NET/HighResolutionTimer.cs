@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Windows.Win32;
+using Windows.Win32.Foundation;
 
 namespace Spout2.NET;
 
@@ -47,30 +48,31 @@ internal static unsafe class HighResolutionTimer
             );
         }
 
-        using TimerWaitHandle wait = new(timer);
-        _ = WaitHandle.WaitAny([wait, cancellationToken.WaitHandle]);
-    }
-
-    // Lets the timer take part in WaitHandle.WaitAny with the cancellation token's handle.
-    private sealed class TimerWaitHandle : WaitHandle
-    {
-        public TimerWaitHandle(SafeHandle timer)
+        // Both handles waited on directly: a WaitHandle over the timer, and the array WaitAny takes,
+        // would be allocated for every frame.
+        SafeHandle cancel = cancellationToken.WaitHandle.SafeWaitHandle;
+        bool timerHeld = false;
+        bool cancelHeld = false;
+        try
         {
-            bool added = false;
-            timer.DangerousAddRef(ref added);
-            Timer = timer;
-            SafeWaitHandle = new Microsoft.Win32.SafeHandles.SafeWaitHandle(
-                timer.DangerousGetHandle(),
-                ownsHandle: false
-            );
+            timer.DangerousAddRef(ref timerHeld);
+            cancel.DangerousAddRef(ref cancelHeld);
+            HANDLE* handles = stackalloc HANDLE[2];
+            handles[0] = (HANDLE)timer.DangerousGetHandle();
+            handles[1] = (HANDLE)cancel.DangerousGetHandle();
+            _ = Win32.WaitForMultipleObjects(2, handles, false, uint.MaxValue);
         }
-
-        private SafeHandle Timer { get; }
-
-        protected override void Dispose(bool explicitDisposing)
+        finally
         {
-            base.Dispose(explicitDisposing);
-            Timer.DangerousRelease();
+            if (cancelHeld)
+            {
+                cancel.DangerousRelease();
+            }
+
+            if (timerHeld)
+            {
+                timer.DangerousRelease();
+            }
         }
     }
 }

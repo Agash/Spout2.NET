@@ -1,6 +1,7 @@
 CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 CloseHandle
 CreateDXGIFactory1
+CreateMutexW
 CreateWaitableTimerExW
 D3D11CreateDevice
 D3D11_QUERY_DESC
@@ -28,8 +29,13 @@ IDXGIDevice
 IDXGIFactory1
 IDXGIKeyedMutex
 IDXGIResource
+MapViewOfFile
+OpenFileMappingW
+ReleaseMutex
 SetWaitableTimerEx
+UnmapViewOfFile
 WAIT_EVENT
+WaitForMultipleObjects
 WaitForSingleObject
 wglGetCurrentContext
 wglGetCurrentDC

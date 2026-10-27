@@ -74,6 +74,16 @@ internal static class SpoutName
         return text.IsEmpty ? null : s_ansi.GetString(text);
     }
 
+    // Whether a slot holds this name, compared as bytes without decoding the slot.
+    public static bool Holds(ReadOnlySpan<byte> slot, string name)
+    {
+        int end = slot.IndexOf((byte)0);
+        ReadOnlySpan<byte> text = end < 0 ? slot : slot[..end];
+        Span<byte> encoded = stackalloc byte[MaxLength];
+        return s_lossyAnsi.TryGetBytes(name, encoded, out int written)
+            && text.SequenceEqual(encoded[..written]);
+    }
+
     // Writes a name into a slot with its terminator. The name was validated by Encode.
     public static void Write(string name, Span<byte> slot)
     {

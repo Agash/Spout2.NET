@@ -57,6 +57,42 @@ public sealed unsafe class ProtocolTests
     }
 
     [TestMethod]
+    public void Slot_HoldsOnlyItsOwnName()
+    {
+        byte[] slot = new byte[SpoutName.MaxLength];
+        SpoutName.Write("Camera 1", slot);
+
+        Assert.IsTrue(SpoutName.Holds(slot, "Camera 1"));
+        Assert.IsFalse(SpoutName.Holds(slot, "Camera"), "a prefix is another name");
+        Assert.IsFalse(SpoutName.Holds(slot, "Camera 10"));
+        Assert.IsFalse(SpoutName.Holds(new byte[SpoutName.MaxLength], "Camera 1"));
+        Assert.IsFalse(SpoutName.Holds(slot, new string('a', 300)), "longer than a slot");
+    }
+
+    [TestMethod]
+    public void SharedMemory_ReadsUnderItsGuard_AndFindsAMissingMap()
+    {
+        string name = $"Spout2.NET.Tests {Guid.NewGuid():N}";
+        Span<byte> read = stackalloc byte[4];
+        Assert.IsFalse(SharedMemory.TryRead(name, read), "no map yet");
+        Assert.IsFalse(SharedMemory.Exists(name));
+
+        using (SharedMemory map = SharedMemory.CreateOrOpen(name, 64))
+        {
+            using (SharedMemory.Lock held = map.Acquire())
+            {
+                "spot"u8.CopyTo(held.Bytes);
+            }
+
+            Assert.IsTrue(SharedMemory.Exists(name));
+            Assert.IsTrue(SharedMemory.TryRead(name, read));
+            Assert.IsTrue(read.SequenceEqual("spot"u8));
+        }
+
+        Assert.IsFalse(SharedMemory.TryRead(name, read), "gone once its last handle closed");
+    }
+
+    [TestMethod]
     public void Name_OutsideTheAnsiCodePage_IsRefused()
     {
         // On a system whose ANSI code page is UTF-8, every name is representable.

@@ -173,7 +173,7 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
         }
 
         frame = default;
-        string? name = _options.SenderName ?? SenderRegistry.GetActive();
+        string? name = _options.SenderName ?? SenderRegistry.GetActive(_connection?.Info.Name);
         if (name is null || !SenderRegistry.TryReadInfo(name, out SharedTextureInfo info))
         {
             if (_connection is { } lost)
