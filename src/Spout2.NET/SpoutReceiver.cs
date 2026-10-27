@@ -186,7 +186,7 @@ public sealed unsafe partial class SpoutReceiver : IDisposable
             return SpoutReceiveResult.NoSender;
         }
 
-        SpoutSenderInfo sender = SpoutSenderInfo.From(name, info);
+        SpoutSenderInfo sender = SpoutSenderInfo.From(name, info, _connection?.Info);
         if (sender.ShareHandle == 0)
         {
             Disconnect();

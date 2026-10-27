@@ -27,14 +27,22 @@ public readonly record struct SpoutSenderInfo(
     bool UsesOpenGLInterop
 )
 {
-    internal static SpoutSenderInfo From(string name, in SharedTextureInfo info) =>
+    // current is the sender as last read: its executable path is kept while the bytes are the
+    // same, as a receiver reads the sender for every frame.
+    internal static SpoutSenderInfo From(
+        string name,
+        in SharedTextureInfo info,
+        SpoutSenderInfo? current = null
+    ) =>
         new(
             name,
             (int)info.Width,
             (int)info.Height,
             SpoutFormats.FromRegistry(info.Format),
             info.ShareHandle,
-            SpoutName.Decode(info.Description),
+            current?.ExecutablePath is { } path && SpoutName.Holds(info.Description, path)
+                ? path
+                : SpoutName.Decode(info.Description),
             info.ShareHandle == 0 || (info.PartnerId & SharedTextureInfo.CpuSharing) != 0,
             (info.PartnerId & SharedTextureInfo.GlDxInterop) != 0
         );
